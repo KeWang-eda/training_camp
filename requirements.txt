@@ -1,0 +1,21 @@
+# Core dependencies
+numpy<2
+langchain==0.3.13
+langchain_openai==0.2.14
+langchain_community==0.3.13
+langchain_core==0.3.28
+
+# AI model
+openai==1.58.1
+
+# Embedding & vector storage
+fastembed==0.4.2
+faiss-cpu==1.8.0
+
+# Terminal interface
+rich==13.9.2
+prompt_toolkit==3.0.48
+pyyaml==6.0.2
+
+# Integrations
+lark-oapi==1.4.24

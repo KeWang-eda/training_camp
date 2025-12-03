@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Logs
+*.log
+output/logs/
+
+# Generated artifacts
+output/
+outputs/
+tmp/
+langchain-chatbot/
+
+# Dev container configs (local setup only)
+.devcontainer/
+
+# Editor/IDE files
+.vscode/
+.idea/

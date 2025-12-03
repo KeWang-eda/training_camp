@@ -1,0 +1,212 @@
+# 全局配置，可在此集中管理终端应用的参数与自定义命令。
+
+app:
+  api_key: "sk-wgPSNYjJHhvE4nPtcpwZpeUqgWwkP2pQNDf4Qpg82ZlpKwCm"
+  default_base_url: "https://api.moonshot.cn/v1"
+  default_model: "kimi-k2-turbo-preview"
+  system_prompt: "你是资深质量专家，请严格按照产品需求提供答案。"
+  image_api_key: "sk-wgPSNYjJHhvE4nPtcpwZpeUqgWwkP2pQNDf4Qpg82ZlpKwCm"
+  image_base_url: "https://api.moonshot.cn/v1"
+  image_model: "moonshot-v1-8k-vision-preview"
+  banner: "欢迎使用终端版 AI 助手！输入 /help 查看命令列表，直接输入内容即可开始聊天。"
+  history_limit: 50
+
+processing:
+  embedding_model: "BAAI/bge-small-zh-v1.5"
+  text_splitter:
+    chunk_size: 1000
+    chunk_overlap: 200
+
+image_prompts:
+  metadata:
+    version: v1
+  classifier: |
+    你是一名图像分类助手。候选类别只有：{options}。
+    请输出最贴近图片语义的类别 key，不要输出其他内容。
+  default:
+    key: image
+    label: 图片
+    prompt: |
+      请详细描述这张图片，列出主要元素、结构及潜在风险。
+    metadata:
+      version: v1
+  types:
+    - key: flow_chart
+      label: 流程图
+      prompt: |
+        识别流程图中的节点、决策与连线，总结流程目标与分支条件。
+      metadata:
+        version: v1
+    - key: architecture
+      label: 架构图
+      prompt: |
+        分析系统架构图，说明组件、依赖关系、部署拓扑及潜在瓶颈。
+      metadata:
+        version: v1
+    - key: wireframe
+      label: UI原型图
+      prompt: |
+        提取界面布局、主要控件、状态变化和关键交互路径。
+      metadata:
+        version: v1
+    - key: table_snapshot
+      label: 报表截图
+      prompt: |
+        解析表格/报表截图，记录核心指标与明显异常，并给出结论。
+      metadata:
+        version: v1
+
+feishu:
+  app_id: "cli_a9a2855c53385bc8"
+  app_secret: "jEVsvxx4T0TM8iEMYl9lufpip1kn50zZ"
+  base_url: "https://open.feishu.cn"
+
+testcase_modes:
+  default:
+    metadata:
+      version: v1
+    layout: detailed
+    system_prompt: "你是测试用例专家。"
+    context_limit: 20000
+    planner_prompt: |
+      请基于以下需求内容列出3-5个需要覆盖的功能模块，每个模块简述目标。
+      {context}
+    builder_prompt: |
+      针对模块「{module}」生成完整测试用例列表，每条用例必须覆盖模板字段并给出清晰的执行细节。
+      {layout_schema}
+      参考需求：
+      {context}
+      输出 JSON，格式固定为 {"module_goal": "...","cases": [...] }，不要附加解释或 Markdown。
+  smoke:
+    metadata:
+      version: v1
+    layout: smoke
+    system_prompt: "你是测试用例专家，仅输出最关键路径。"
+    context_limit: 10000
+    planner_prompt: |
+      基于需求挑选2个最关键的冒烟模块，简述原因。
+      {context}
+    builder_prompt: |
+      只生成模块「{module}」的冒烟用例（1-2条），确保覆盖主流程。
+      {layout_schema}
+      背景：
+      {context}
+      输出 JSON，格式 {"module_goal": "...","cases": [...] }，不要出现额外文本。
+
+testcase_layouts:
+  detailed:
+    description: "标准模板，覆盖功能/兼容/性能/安全维度。"
+    case_fields:
+      - key: title
+        label: "用例标题"
+        required: true
+      - key: preconditions
+        label: "前置条件"
+      - key: steps
+        label: "操作步骤"
+      - key: expected
+        label: "预期结果"
+      - key: risk
+        label: "风险提示"
+      - key: priority
+        label: "优先级"
+    plan_sections:
+      - title: "功能覆盖"
+        checklist:
+          - "使用等价类、边界值、场景法覆盖主干与异常流程。"
+          - "核对模块依赖与互斥逻辑，防止改动牵连。"
+      - title: "兼容性"
+        checklist:
+          - "验证历史数据、旧版本客户端与不同区域配置的兼容。"
+          - "关注多端（Web/App）交互一致性。"
+      - title: "性能与韧性"
+        checklist:
+          - "关键路径需在 30 秒内完成，异常有降级或重试。"
+          - "覆盖限流、沙箱/预案演练，防止发布事故。"
+      - title: "安全与风控"
+        checklist:
+          - "验证权限、越权、数据注入与优惠/补贴防刷。"
+          - "关注日志埋点、监控报警与回滚预案。"
+  smoke:
+    description: "冒烟模板，仅验证主流程可用。"
+    case_fields:
+      - key: title
+        label: "用例标题"
+        required: true
+      - key: steps
+        label: "核心步骤"
+      - key: expected
+        label: "预期结果"
+    plan_sections:
+      - title: "冒烟关注点"
+        checklist:
+          - "保障主流程连通，关键按钮/接口无 5xx。"
+          - "确保基础权限、配置加载和关键监控就绪。"
+
+evaluation_metrics: []
+
+evaluation:
+  review_metrics:
+    - name: alignment
+      system_prompt: "你是 QA 评审专家，重点检查测试方案设计思路是否与需求一致。"
+      prompt: |
+        需求背景（baseline 摘要）：
+        {baseline}
+
+        候选测试用例：
+        {candidate}
+
+        请结合以下标准给出 0-100 的得分：
+        - 是否清晰描述测试方案设计思路与测试重点
+        - 是否说明依赖、验收标准、用户路径，避免“逐条念用例”
+        - 是否体现产品/开发/测试对需求的共同理解
+        返回 JSON，字段包括 score/summary/risks（字符串数组）。
+    - name: coverage
+      system_prompt: "你是 QA 评审专家，重点衡量测试用例覆盖率与结构。"
+      prompt: |
+        baseline（需求或人工用例）：
+        {baseline}
+
+        candidate（生成用例）：
+        {candidate}
+
+        请依据以下标准返回 0-100 分：
+        - 是否覆盖主流程、异常、跨端/兼容、性能/安全等测试点
+        - 是否区分优先级，结构清晰、无冗余
+        - 是否列出缺失场景与冗余用例
+        仅返回 JSON {"score":...,"summary":"...","risks":["..."]}。
+    - name: bug_prevention
+      system_prompt: "你是 QA 评审专家，关注异常、预案和防 Bug 能力。"
+      prompt: |
+        baseline：
+        {baseline}
+
+        candidate：
+        {candidate}
+
+        请评估候选用例是否覆盖边界/容灾/回滚/监控/风控等要点，并给出 0-100 分。
+        输出 JSON {"score":...,"summary":"...","risks":["..."]}，其中 risks 用来提示缺失的异常或预案场景。
+
+commands:
+  summarize:
+    description: "Summarizes the conversation so far."
+    prompt: |
+      请对下面的对话历史进行简洁的总结:
+      {history}
+
+  suggest:
+    description: "Provides suggestions based on the conversation."
+    prompt: |
+      基于下面的对话内容，请给出可以执行的建议:
+      {history}
+
+outputs:
+  testcases:
+    default_format: "json"
+    default_dir: "./output/testcases"
+  evaluations:
+    default_dir: "./output/evaluations"
+
+paths:
+  latest_testcase_cache: "./output/latest_testcase.json"
+  script_log: "./output/logs/shell.log"
