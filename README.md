@@ -78,7 +78,6 @@ training_camp/
 
 ## 📚 更多文档
 - [docs/MODULE_OVERVIEW.md](docs/MODULE_OVERVIEW.md)：逐文件说明、函数职责、后续扩展点。
-- [docs/DESIGN_PRD_TEST.md](docs/DESIGN_PRD_TEST.md)：PRD→测试用例方案、图片多 Prompt 策略、评测流程。
 - [docs/OPTIMIZATION_IDEAS.md](docs/OPTIMIZATION_IDEAS.md)：参考 `python_langchain_cn` 教程整理的后续演进建议。
 
 ## ✅ 开发者须知
