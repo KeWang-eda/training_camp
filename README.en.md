@@ -20,7 +20,7 @@ python cli.py --config config.yaml
 ```
 1. Set text/vision API keys under `app` (or via env vars such as `KIMI_API_KEY`).
 2. Configure `feishu.app_id` / `app_secret` if you need `/read_link`.
-3. Load assets with `/read` or `/read_link`, then run `/generate_cases` and `/evaluate_cases`.
+3. Load assets with `/read` or `/read_link`, then run `/generate_cases` and `/evaluate_cases`. 
 
 ## Core Commands
 | Command | Description |
