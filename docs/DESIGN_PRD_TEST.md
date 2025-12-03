@@ -8,28 +8,15 @@
 ## 总体架构
 
 ```
-langchain-chatbot/
-├── cli.py                         # 交互入口，新增场景指令/模式切换
-├── config.yaml                    # 全量配置：模型、Feishu、Agent Prompt、图片分类 Prompt、命令等
-├── src/
-│   ├── chatbot/
-│   │   ├── chatbot_core.py        # 统一文本 LLM (保留系统 prompt 注入)
-│   │   ├── content_processor.py  # 文档/PDF/图片解析，新增图片类型判断
-│   │   ├── terminal_chatbot_core.py
-│   │   │   ├── ingest_local_files() / ingest_feishu_document()
-│   │   │   ├── run_testcase_generation()        # ★ 新增：PRD→测试用例
-│   │   │   └── run_evaluation()                # ★ 新增：自动化评测
-│   ├── terminal/
-│   │   ├── command_handler.py      # 新增 `/generate_cases` `/evaluate_cases`
-│   │   └── stream_handler.py
-│   └── utils/
-│       ├── image_analyzer.py       # 支持多模型，新增“图片类型分类 + 类型化 prompt”流程
-│       └── feishu_client.py
-├── docs/
-│   └── DESIGN_PRD_TEST.md          # ★ 输出的说明文档（本文件）
-└── data/
-    ├── manual_cases/               # 存放人工基准用例
-    └── outputs/                    # 生成的用例 & 评测报告
+training_camp/
+├── cli.py                          # 交互入口，新增场景指令/模式切换
+├── config.yaml                     # 全量配置：模型、Feishu、Agent Prompt、图片分类 Prompt、命令等
+├── src/                            # chatbot / terminal / utils 模块
+├── docs/                           # DESIGN_PRD_TEST、MODULE_OVERVIEW 等
+├── output/                         # 生成的用例 & 评测报告
+├── pipeline/                       # 课程示例 / 数据脚本
+├── scrpits/                        # `.tcl` / `.txt` 批处理脚本
+└── langchain-chatbot/              # 老版本代码备份（如需参考）
 ```
 
 ---
@@ -73,21 +60,12 @@ langchain-chatbot/
   4. 若提供 `--mode smoke` 则仅生成关键场景；`--mode full` 生成完整覆盖。
 
 ### 4. 自动化评测
-- `/evaluate_cases --baseline path/to/manual.md --candidate path/to/generated.md`
+- `/evaluate_cases --baseline path/to/manual.md --candidate path/to/generated.json`
 - 流程：
-  1. 解析两份用例 Markdown，抽取标题/前置条件/步骤/预期。
-  2. 指标配置示例（写入 `config.yaml.metrics`）：
-     ```yaml
-     metrics:
-       coverage:
-         description: "生成用例覆盖了多少人工场景"
-         prompt: "请找出 generated 中覆盖 manual 的比例 ..."
-       specificity:
-         description: "步骤与预期是否具体"
-         prompt: "评估以下用例描述的具体程度 ..."
-     ```
-  3. `run_evaluation()` 按指标逐一喂给 LLM/规则引擎，形成 JSON/Markdown 报告。
-  4. 输出保存在 `./output/evaluations/<timestamp>.json`，包含：各指标评分、差异建议、版本信息，以及 `metadata = {generated_at, config_hash}`。
+  1. 自动解析输入文件：若 `candidate` 缺失，则使用 `latest_testcase_cache` 中记录的最近一次 `/generate_cases` 结果；若 `baseline` 缺失，则注入占位说明。
+  2. 指标全部定义在 `config.evaluation.review_metrics`（示例：alignment / coverage / bug_prevention），每个指标都要求 LLM 输出 `{"score":0-100,"summary":"...","risks":["..."]}`，并可通过 `format_hint` 强化 JSON 约束。
+  3. `EvaluationEngine` 解析 JSON，将 `score` 按 `risks` 数量套用扣分规则（默认每条 -5，封顶 40），再拼入 `summary`/`suggestions`。
+  4. 报告保存在 `./output/evaluations/<timestamp>_report.json`，`metadata` 含 `generated_at` 与 `config_hash`，方便追溯配置版本。
 
 ### 5. CLI 交互增强
 - `/help` 列出新命令。
@@ -151,6 +129,6 @@ flowchart LR
 - `ContentProcessor`：统一将本地/Feishu/图片内容转为 `ContentSegment`（type/source/content/metadata）。
 - `TerminalChatbotCore`：持有 `loaded_segments`、向量索引、并协调生成/评测流程。
 - `TestcaseGenerator`（嵌入在 TerminalChatbotCore 中的 `run_testcase_generation`）：根据 `testcase_modes` prompt 生成结构化 `TestcaseDocument`，默认落盘 JSON。
-- `EvaluationEngine`（`run_evaluation`）：先执行 `case_health`（本地函数），再按 `evaluation.review_metrics`/`evaluation_metrics` 调用 LLM，输出 JSON 报告。
+- `EvaluationEngine`（`run_evaluation`）：解析 `review_metrics` 的 JSON 输出，根据 `risks` 自动扣分；若需要额外 Prompt，可在 `evaluation_metrics` 中扩展。
 
-- `TerminalChatbotCore._calculate_case_health()`：当前评测占位逻辑，根据前置/步骤/预期与描述长度给出 0~100 分，后续可按需替换。
+- `TerminalChatbotCore`：负责装配上下文、触发生成/评测流程、维护最新用例路径缓存，以及统一的结果落盘逻辑（`./output/testcases`、`./output/evaluations`）。

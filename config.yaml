@@ -1,11 +1,11 @@
 # 全局配置，可在此集中管理终端应用的参数与自定义命令。
 
 app:
-  api_key: "sk-wgPSNYjJHhvE4nPtcpwZpeUqgWwkP2pQNDf4Qpg82ZlpKwCm"
+  api_key: ""
   default_base_url: "https://api.moonshot.cn/v1"
   default_model: "kimi-k2-turbo-preview"
   system_prompt: "你是资深质量专家，请严格按照产品需求提供答案。"
-  image_api_key: "sk-wgPSNYjJHhvE4nPtcpwZpeUqgWwkP2pQNDf4Qpg82ZlpKwCm"
+  image_api_key: ""
   image_base_url: "https://api.moonshot.cn/v1"
   image_model: "moonshot-v1-8k-vision-preview"
   banner: "欢迎使用终端版 AI 助手！输入 /help 查看命令列表，直接输入内容即可开始聊天。"

@@ -5,28 +5,21 @@
 ## 1. 总览
 
 ```
-langchain-chatbot/
+training_camp/
 ├── cli.py                       # CLI 入口，加载 config 并注入 TerminalChatbotCore
 ├── config.yaml                  # 模型、prompt、Feishu、图片类型、评测指标、测试模板等配置
-├── src/
-│   ├── chatbot/
-│   │   ├── chatbot_core.py          # 统一 OpenAI/Kimi LLM 封装，提供基础会话链
-│   │   ├── content_processor.py     # 文本/文档/图片 → ContentSegment
-│   │   └── terminal_chatbot_core.py # Orchestrator：摄取/生成/评测
-│   ├── terminal/
-│   │   ├── command_handler.py       # 解析指令 `/read` `/generate_cases` `/evaluate_cases`
-│   │   └── stream_handler.py        # 终端流式输出
-│   └── utils/
-│       ├── image_analyzer.py        # 多模态模型调用、图片分类
-│       └── feishu_client.py         # 调用飞书 RawContent 接口
-└── docs/                           # 设计文档（DESIGN_PRD_TEST.md、MODULE_OVERVIEW.md 等）
+├── src/                         # chatbot / terminal / utils 模块
+├── docs/                        # 设计文档（DESIGN_PRD_TEST.md、MODULE_OVERVIEW.md 等）
+├── output/                      # 生成的用例与评测报告
+├── pipeline/、scrpits/          # 课程示例与批处理脚本
+└── langchain-chatbot/           # 老版本代码备份
 ```
 
 ### 数据流
 1. `cli.py` 读取 `config.yaml`，构造 `TerminalChatbotCore` 与 `CommandHandler`。
 2. `/read` `/read_link` 等指令触发 `TerminalChatbotCore.ingest_*`，由 `ContentProcessor`/`FeishuDocClient` 产生 `ContentSegment`，并写入向量库 + `loaded_segments`。
 3. `/generate_cases`：`run_testcase_generation(thoughts=…, plan=…, output_format=…)` 把 `loaded_segments` 合并成上下文，套 `testcase_modes` prompt，基于 `testcase_layouts` 生成结构化 JSON，再渲染为 Markdown/JSON；默认格式与路径来自 `outputs.testcases`；`thoughts=true` 展示 Planner 模块列表，`plan=true` 展示“测试方案摘要” checklist。
-4. `/evaluate_cases`：`run_evaluation()` 读取人工/生成用例，先跑 `case_health`（本地指标，自动 fallback 当文件缺失时使用占位文本），再按 `review_metrics`/`evaluation_metrics` 调用 LLM，生成 JSON 报告。
+4. `/evaluate_cases`：`run_evaluation()` 读取人工/生成用例，自动 fallback 缺失文件，然后按 `review_metrics` 调用 LLM（依据建议条目动态扣分）并生成 JSON 报告。
 
 ## 2. 目录与文件详解
 
@@ -64,7 +57,7 @@ langchain-chatbot/
   - `ingest_feishu_document()`：通过 `FeishuDocClient` 拉取 RawContent，封装为 `ContentSegment`。
   - `run_testcase_generation(mode, output, output_format, show_thoughts, show_plan_summary)`：构建上下文 → 套 prompt → 根据 `testcase_layouts` 渲染 Markdown/JSON，并附带 `generated_at`/`config_hash` 元信息；按需返回“思考过程”和“测试方案摘要”。
   - `_render_testcase_document()`：根据 `TestcaseDocument` + layout schema 渲染 Markdown/JSON；JSON 额外包含 `metadata`（时间戳与配置哈希）。
-  - `run_evaluation(baseline, candidate, output)`：先调用 `calculate_case_health()`（本地函数）生成直接分，再按 `review_metrics` 调用 LangChain 评审指标，最后附上 `evaluation_metrics`（可选）并输出 JSON 报告（含 `metadata` 字段）；当 baseline/candidate 路径缺失时自动回退到占位文本或最近生成的用例。
+  - `run_evaluation(baseline, candidate, output)`：自动加载基线与候选文件（缺失时使用占位/最近生成的用例），按 `review_metrics` 调用 LLM，依据“建议数量 × 扣分”规则生成 JSON 报告（含 `metadata` 字段）。
   - `_write_output(subdir, desired_path, content, suffix)`：标准化结果落盘路径，默认遵循 `outputs.*` 配置（`./output/testcases`、`./output/evaluations` 等）。
 - **后续计划**：可以将 `run_testcase_generation`、`run_evaluation` 拆分到独立类（如 `TestcaseGenerator`、`EvaluationEngine`），当前设计保留接口，方便重构。
 
@@ -110,7 +103,7 @@ langchain-chatbot/
 
 ## 4. TODO / 扩展建议
 1. **生成与评测责任拆分**：可将 `run_testcase_generation` / `run_evaluation` 提取为独立类，便于单元测试。
-2. **统计式评测**：结合 `_calculate_case_health` 的本地函数，引入更真实的指标（覆盖率、步骤粒度、前置条件完备度等）。
+2. **统计式评测**：结合 `_calculate_case_health` 或独立校验器，引入硬指标（字段缺失率、步骤粒度、前置条件完备度等）并与 LLM 分数并行展示。
 3. **多 Agent 支持**：在 config 中预定义多个 `agents` 并提供 `/switch_agent` 指令，实现不同场景（开发/测试/产品）提示词切换。
 
 ---
