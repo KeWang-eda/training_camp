@@ -9,7 +9,6 @@ The LangChain-based terminal assistant has been migrated to the `ByteDance/train
 - **Automated evaluation** – `/evaluate_cases` consumes `evaluation.review_metrics`, requests structured JSON (score/summary/risks) from the LLM, and deducts 5 points per missing scenario (capped at 40). Baseline/candidate paths fall back to placeholders or the latest generated file, so the command is single-argument friendly.
 - **Batch scripts** – `python cli.py --config config.yaml -f run.txt` executes `.tcl/.txt` scripts line by line, mirroring output to the console and to `./output/logs/shell.log` (overridable via `--log-file`). Errors stop execution but preserve the log trail.
 
-
 ## Quick Start
 ```bash
 conda create -n training_camp python=3.12 -y
