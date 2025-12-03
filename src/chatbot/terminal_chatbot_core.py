@@ -382,6 +382,7 @@ class TerminalChatbotCore:
                     "score": record.score,
                     "summary": record.rationale,
                     "suggestions": record.suggestions,
+                    "penalty_summary": getattr(record, 'penalty_summary', {}),
                     "metadata": record.metadata,
                 }
             )

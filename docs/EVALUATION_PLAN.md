@@ -1,6 +1,6 @@
 # 测试用例评估方案（Evaluation Plan）
 
-> 目标：让 `/evaluate_cases` 在没有人工复核的前提下，依据统一指标客观输出 0~100 的分数，并把扣分原因（缺失的测试点/风险）结构化写入 JSON，方便后续追踪。
+> 目标：`/evaluate_cases` 在缺少人工复核时仍能基于统一指标输出 0~100 的评分，并把扣分原因（缺失场景、风险项）结构化写入 JSON，便于追踪与回归。
 
 ---
 
@@ -17,14 +17,14 @@ TerminalChatbotCore.run_evaluation()
         ↓
 EvaluationEngine.evaluate()
         ↓（按 metrics 顺序执行）
-LLM 生成 JSON（score/summary/risks） → 应用扣分规则 → 写入 output/evaluations/<timestamp>_report.json
+LLM 返回结构化 JSON → EvaluationEngine 归一化风险 & 扣分 → 写入 output/evaluations/<timestamp>_report.json → 终端展示摘要
 ```
 
 - **输入**：
   - `需求/基线 (baseline)`：可以是 PRD、人工用例或提纲；作用是让 LLM 了解“应该覆盖什么”。
   - `生成用例 (candidate)`：`/generate_cases` 产物，默认已包含 JSON/Markdown 的模块划分、字段、计划摘要。
   - `参考模板 (optional)`：未来如需和某个“金标准”比对，可放在 `baseline`，当前实现已满足“至少需求 + 生成用例”的要求。
-- **输出**：单个 JSON 文件，包含 `metadata` 与 `results` 列表；每个指标对象都携带 `name / score / summary / suggestions`。
+- **输出**：单个 JSON 文件，包含 `metadata` 与 `results` 列表；每个指标对象含 `name / score / summary / suggestions / penalty_summary / metadata`。
 - **默认目录**：由 `config.outputs.evaluations.default_dir` 控制（当前 `./output/evaluations`）。
 - **得分范围**：强制要求返回 0~100 的整数/浮点数；若模型未能解析，结果为 `null` 并在终端告警。
 
@@ -32,13 +32,13 @@ LLM 生成 JSON（score/summary/risks） → 应用扣分规则 → 写入 outpu
 
 ## 2. 指标与衡量方式
 
-| 指标 | 关注点 | 测量方法 | 扣分逻辑 |
+| 指标 | 关注点 | 期望返回字段 | 分数计算 |
 | --- | --- | --- | --- |
-| `alignment` | 测试方案是否体现了需求场景、策略思路与三方（产品/研发/测试）对齐 | LLM 读取需求摘要与候选用例，要求返回 `score / summary / risks[]`。`summary` 概述亮点与缺口；`risks` 列出“遗漏的思路、未定义基线、缺少预案”等。 | 每条 `risk` 默认扣 5 分；可在 Prompt 中要求模型标注“扣 5/10 分”，后续版本根据 `risks[].penalty` 扣分。 |
-| `coverage` | 功能、异常、兼容、性能/安全等维度的覆盖度 + 优先级结构 | LLM 需要显式指出“缺少哪一端/场景/边界”。`risks` 里建议带上“iOS/Android 一致性缺失”等关键词，利于映射回用例模块。 | 同上，默认每条 -5；若 `risks` 为空则直接使用模型给出的 `score`。 |
-| `bug_prevention` | 异常场景、降级、风控、监控、回滚能力 | Prompt 要求列出“缺少某预案/未覆盖某风险”并说明场景。重点关注发布阶段、资金/内容安全、基础设施故障。 | 同上，默认每条 -5；最多扣 40 分，避免出现负分。 |
+| `alignment` | 测试方案是否体现需求背景、策略思路与跨角色对齐 | `score`、`summary`、`suggestions[]` 或 `risks[]` | 对 `suggestions` 中每个条目尝试读取 `deduction`；若缺失则根据 `level`（或推断的 P0-P9）计算 `10 - level`；全部扣分求和后 `score = max(0, 100 - total_deduction)` |
+| `coverage` | 主流程/异常/兼容/性能/安全覆盖是否充分 | 同上 | 与 `alignment` 相同，重点关注覆盖盲区描述，建议在 `suggestions` 加入 `category` 标记维度 |
+| `bug_prevention` | 异常处理、预案、监控、回滚能力 | 同上 | 仍按扣分模型计算；若模型未返回结构化条目将自动推断优先级 |
 
-> **说明**：若未来需要“自适应扣分”，可在 `risks` 中返回对象数组（`{"detail":"...","penalty":10}`），`EvaluationEngine._apply_risk_penalty()` 会读取 `penalty` 字段，否则回退至 5 分。
+> LLM 若仅返回 `risks` 数组，`EvaluationEngine` 会将其转换为 `suggestions` 并调用 `_infer_level` 逐条推断优先级。
 
 ---
 
@@ -53,9 +53,23 @@ LLM 生成 JSON（score/summary/risks） → 应用扣分规则 → 写入 outpu
   "results": [
     {
       "name": "alignment",
-      "score": 53.0,
-      "summary": "亮点...\n扣分点：共 5 项（每项 -5 分）",
-      "suggestions": "- 未定义需求基线 (扣5分)\n- ...",
+      "score": 72.0,
+      "summary": "测试重点覆盖主流程，但缺少异常预案说明。",
+      "suggestions": [
+        {
+          "id": "S1",
+          "text": "缺少优惠券过期场景的回归测试。",
+          "priority": "P3",
+          "level": 3,
+          "deduction": 7,
+          "category": "coverage",
+          "hint": "模型返回或自动推断"
+        }
+      ],
+      "penalty_summary": {
+        "count": 1,
+        "total_deduction": 28
+      },
       "metadata": {
         "prompt": "evaluation.review_metrics[0]"
       }
@@ -66,19 +80,21 @@ LLM 生成 JSON（score/summary/risks） → 应用扣分规则 → 写入 outpu
 
 - `metadata.generated_at`：UTC ISO8601 时间。
 - `metadata.config_hash`：`config.yaml` 内容的 MD5，方便追溯配置版本。
-- `results[].summary`：保留模型原文，并在内部追加“扣分点统计行”，便于人工扫描。
-- `results[].suggestions`：逐条呈现扣分条目（`- 描述 (扣5分)`），方便直接转成待办。
+- `results[].summary`：保留模型原文，未做额外加工；若模型未返回内容则回退到原始响应。
+- `results[].suggestions`：列表元素为字典，至少包含 `text`；`deduction`/`level`/`priority` 可缺省，由引擎自动补全。
+- `results[].penalty_summary`：记录扣分条目数量与总扣分，用于快速统计。
 
 ---
 
 ## 4. 扣分与客观性保障
 
 1. **JSON 严格模式**：`review_metrics` Prompt 都以“仅输出 JSON”收尾，`EvaluationEngine` 首先尝试 `json.loads()`，失败时才退化为纯文本。
-2. **风险驱动扣分**：
-   - `_apply_risk_penalty(raw_score, len(risks))` 默认 `扣分 = min(risk_count × 5, 40)`，结果被 `round(..., 2)` 并限制在 `[0, 100]`。
-   - 若模型返回的 `score` 本身很低（如 20），则不会因为无风险描述而抬高。
-3. **可配置模板**：`config.yaml.evaluation.review_metrics` 支持自定义 `prompt/system_prompt/format_hint`，可以针对优惠券、支付等场景扩展指标。
-4. **输入可追溯**：`baseline_path` / `candidate_path` 写入终端日志；若第二个参数无效，会自动 fallback 到最新一次 `/generate_cases` 输出，仍会生成报告。
+2. **风险归一化**：
+  - 优先读取 `suggestions[*].deduction`，缺失时根据 `level` 或 `priority`（如 `P3`）计算，若仍不可用则通过 `_infer_level` 调用同一 LLM 推断（结果缓存计划中）。
+  - 总扣分 = 所有条目 `deduction` 之和，最终得分 `max(0, 100 - total_deduction)`；若模型完全未返回条目，则直接保留模型提供的 `score`。
+3. **元数据记录**：`penalty_summary.count/total_deduction` 与 `metadata.prompt`（索引配置）会写入报告，方便定位模板。
+4. **输入可追溯**：`baseline_path`/`candidate_path` 与处理结果通过 `status_callback` 输出到终端；脚本模式下同样写入日志。
+5. **兼容旧逻辑**：`_apply_risk_penalty` 仍保留以兼容旧 prompt，但在当前实现中已被结构化扣分逻辑取代。
 
 ---
 
@@ -89,17 +105,18 @@ LLM 生成 JSON（score/summary/risks） → 应用扣分规则 → 写入 outpu
   - `python cli.py --config config.yaml` → `/evaluate_cases`：baseline=占位文本，candidate=latest 生成的 JSON。
   - `/evaluate_cases baseline.md`：baseline=baseline.md，candidate=latest。
   - `/evaluate_cases baseline.md candidate.json output=/tmp/report.json`：完全自定义。
-- 评估完成后，终端会显示：
-  - `Evaluation report saved to output/evaluations/<timestamp>_report.json`
-  - 报告中 `results` 顺序与 `review_metrics` 一致，方便和配置一一对照。
+- 评估完成后，终端会输出：
+  - `Evaluation report saved to ...` 成功提示；
+  - 若解析成功，追加 `alignment: xx  coverage: xx  bug_prevention: xx  total: yy` 摘要，方便快速查看分数。
+- 报告中的 `results` 顺序与 `review_metrics` 定义一致，便于配置比对。
 
 ---
 
 ## 6. 后续扩展
 
-1. **严重度映射**：允许 `risks` 返回 `{"detail":"...","severity":"high"}`，由引擎映射 `high=10`、`medium=5`、`low=2`。
-2. **统计指标**：结合 `_calculate_case_health()` 或 JSON Schema 校验，补充“字段缺失率、步骤平均长度”等硬指标，与 LLM 打分并行展示。
-3. **多份候选比对**：未来 `/evaluate_cases baseline c1.json c2.json` 可输出多份 `results`，便于 A/B prompt 对比。
-4. **可视化报告**：在 `output/evaluations` 同步生成 Markdown/HTML，将 `risks` 列表直观呈现给 QA/PM。
+1. **建议缓存**：为 `_infer_level` 增加最近请求缓存，避免重复调用同一文本。
+2. **硬指标并行**：继续完善 `_calculate_case_health()`（字段缺失率、步骤平均长度）并在报告中附加，形成“规则 + LLM”双重评分。
+3. **多候选对比**：扩展 `/evaluate_cases` 支持多个候选文件，输出对比表格便于 prompt 调优。
+4. **可视化报告**：在 `output/evaluations` 追加 Markdown/HTML 渲染，结合 `suggestions` 生成待办清单。
 
-以上方案确保：输入至少包含“需求 + 生成用例”、输出为结构化 JSON 且分数处于 0~100 区间，并通过风险条目透明说明扣分原因，实现“无需人工复核也能快速客观评分”的目标。
+当前实现已满足 Coursework 需求：输入需求与用例即可得到可追溯的 0~100 分数与结构化改进建议。后续优化将聚焦稳定性、效率与可观测性。

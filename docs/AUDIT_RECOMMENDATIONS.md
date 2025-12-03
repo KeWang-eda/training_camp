@@ -1,78 +1,59 @@
 # 项目审阅建议汇总
 
-> 本文汇总对 `training_camp` 项目的逐文件审阅结论与改进建议，聚焦“代码精简、替代开源库、配置与安全、开发体验”四个维度。建议分优先级执行，可按模块拆分到任务。
+> 基于 2025-12-03 的代码快照，对 `training_camp` 逐模块的实现状态与改进优先级进行复盘。当前版本已完成核心改造（配置化模型、脚本执行、测试生成/评测闭环、元信息写入等），以下建议聚焦进一步的工程化与可维护性提升。
 
 ---
 
-## 顶层与配置
-
-## 核心聊天模块（src/chatbot）
-- **chatbot_core.py**:
-  - Embeddings：中文场景建议 `BAAI/bge-small-zh-v1.5`；文本切分参数抽到配置（`chunk_size=1000, overlap=200`）。
-  - 轻量会话链：`_BasicConversationChain` 可用 `langchain_core` 的 `Runnable` 重写以减少自维护代码；当前保留也可。
-- **terminal_chatbot_core.py**:
-  - 单一历史来源：`conversation_history` 与 `MemoryManager.chat_history` 二者合一，以 `MemoryManager` 为权威；展示时从内存读取。
-  - 输出落盘：新增原子写入（临时文件 + rename）、异常详细日志，抽到 `utils/io.py` 复用。
-  - Feishu 调用：封装内加入重试（`tenacity`）与速率限制；错误信息面向用户可读。
-  - RAG 历史：`_build_rag_history` 可直接基于 `MemoryManager.get_recent_messages()` 构造，减少重复逻辑。
-
-- **evaluation_engine.py**:
-  - JSON 优先：若返回结构化 JSON，优先解析键值评分，`_extract_score` 作为回退。
-- **testcase_generator.py**:
-  - 布局完全配置化：将默认与 smoke 布局都放到 `config.yaml`，减少代码内置 fallback。
-  - 解析失败记录：JSON 解析失败时写入日志，`fallback_content` 保留原始输出便于审查。
-  - 上下文构造：目前尾部截断可用；后续可引入标题/摘要优先拼接策略。
-
-## 终端交互模块（src/terminal）
-- **command_handler.py**:
-  - 参数解析：使用 `shlex.split` + 简易键值解析函数，或迁移 `typer/click`（可选），减少自写解析逻辑。
-  - 目录读取：`/read` 支持通配与递归（限定扩展名），提升载入效率。
-  - 渲染抽取：将计划摘要渲染抽到 `render_plan_sections()`，减少重复。
-- **stream_handler.py**:
-  - Markdown/代码渲染：使用 `rich.markdown` 或 `rich.syntax.Syntax` 对代码块高亮，减少手写解析状态机。
-
-## 工具与外部集成（src/utils）
-- **feishu_client.py**:
-  - URL 解析：更严格的 URL 解析（`urllib.parse`）以兼容更多链接形态。
-  - 重试与超时：使用 `tenacity`/`httpx` 实现重试与超时控制。
-- **image_analyzer.py**:
-  - 大图压缩：使用 Pillow 预压缩大图再做 base64，降低 token 消耗与超时概率。
-  - 错误枚举：统一错误码/枚举返回，便于上层 UI 展示。
-
-## 文档与输出
-- **文档**:
-  - 在 `README` 增加“配置指南”章节，说明 `config.yaml` 各段含义与环境变量优先级；给出 `.env` 示例。
-  - 统一 CLI 示例写法（位置参数或键值对）并与 `/help` 保持一致。
-  - 提取重复 Prompt 到独立文档（如 `PROMPT_TEMPLATES.md`），主文档仅保留链接。
-- **输出**:
-  - 元信息增强：在生成 JSON 增加 `generated_at`（ISO 时间）、`config_hash`（当前配置哈希）。
-  - 命名规范：统一 `<timestamp>_<mode>.<json|md>`；在生成过程统一处理。
-  - 结构校验：引入轻量 JSON Schema 校验，提高评测前的鲁棒性。
+## 已交付亮点（复核通过）
+- **配置抽离完整**：`config.yaml` 已包含 `processing.embedding_model`、`text_splitter`、图片分类、多模式用例模板与评审指标，CLI 入口也支持 `--config` 与环境变量覆盖。
+- **生成/评测留痕**：`TerminalChatbotCore` 在写入用例与评测报告时统一追加 `generated_at` 与 `config_hash`，并维护 `output/latest_testcase.json` 便于后续引用。
+- **命令行体验**：`CommandHandler` 支持脚本模式、Planner 思考/计划面板开关，`cli.py` 的 `-f/--log-file` 结合 Rich 输出满足批量执行场景。
+- **结构化评审**：`EvaluationEngine` 结合 `review_metrics` 做 JSON 解析、风险归一化与扣分统计，评审记录写入 `MemoryManager` 便于追溯。
 
 ---
 
-## 优先级建议（从易到难）
-1. 移除明文密钥，支持环境变量覆盖；更新 README 配置指南。
-2. 抽取文本切分与 embedding 模型到 `config.yaml`；bge 改为中文小模型（如需）。
-3. 统一输出文件命名与元信息；加原子写入与异常日志。
-4. 终端渲染：引入 `rich.markdown`/`rich.syntax`，简化代码块处理。
+## 关键改进事项
+
+| 优先级 | 模块 | 现状评估 | 建议 |
+| --- | --- | --- | --- |
+| P0 | 配置安全 | `config.yaml` 仍保留 Feishu 明文凭据 | 改为环境变量或本地 `.env`，并在 README/USAGE 提示优先级顺序；添加示例脚本验证配置缺失时的提示文案 |
+| P0 | 输出写入 | `_write_output` 直接写文件，异常会产生半写文件 | 引入临时文件 + `Path.replace` 的原子写，统一封装到 `utils/io.py` 复用生成/评测/日志写入 |
+| P1 | 终端渲染 | `TerminalStreamHandler` 手动维护代码块状态 | 改用 `rich.syntax.Syntax` / `rich.markdown.Markdown`，减少状态机逻辑，修复多段代码块合并问题 |
+| P1 | RAG 记忆 | `conversation_history` 与 `MemoryManager.chat_history` 重复存储 | 统一依赖 `MemoryManager`，`_build_rag_history` 改用 `get_recent_messages()`，并考虑暴露历史摘要给外部命令 |
+| P1 | 文档摄取 | 每次 `_ingest_segments` 重建向量库，仅保留最新批次 | 追加模式：保留历史 segments 并更新向量库，或提供 `/reset_docs` 命令显式清理，避免意外覆盖 |
+| P2 | Feishu 集成 | `FeishuDocClient` 无重试/超时控制，错误提示偏底层 | 引入 `httpx + tenacity`，补充用户可读错误信息；URL 解析改用 `urllib.parse` 兼容多种链接 |
+| P2 | 图片处理 | `ImageAnalyzer` 未做大图压缩 | 接入 Pillow 做尺寸压缩，并区分失败时的错误码/提示，降低多模态调用成本 |
 
 ---
 
-## 可选开源库替代/增强
-- `typer` 或 `click`：更易维护的 CLI 与子命令。
-- `httpx` + `tenacity`：HTTP 调用与重试策略（Feishu、外部 API）。
-- `orjson`：更快的 JSON 序列化。
-- `pydantic` v2：配置/数据对象校验与类型化。
-- `python-dotenv`：本地开发环境变量加载。
+## 模块级细化建议
+
+### src/chatbot
+- `chatbot_core.py`：若后续接入多模型，可抽象成 `LLMProvider` 接口；当前默认 `FastEmbedEmbeddings` 已切换中文模型，可保留。
+- `terminal_chatbot_core.py`：评审参数与生成模式解析可迁移至 `dataclasses`，并补充日志上下文（mode、输出路径、提示词版本）。
+- `testcase_generator.py`：JSON 解析失败时仅回落到 `fallback_content`，建议使用 `logger.warning` 附带模块名与截断内容，便于排查模型输出问题。
+- `evaluation_engine.py`：`_infer_level` 多次调用模型，后续可缓存重复文本的推断结果，或允许配置静态映射以减少额外请求。
+
+### src/terminal
+- `command_handler.py`：当前 `/read` 逐文件处理，后续可支持 `glob` 与递归；参数解析可引入 `shlex.split` 避免路径含空格的解析问题。
+- `stream_handler.py`：建议抽象成“Markdown 渲染 + 语法高亮”组合，提升可维护性并支持复制代码块。
+
+### src/utils
+- `feishu_client.py`：补充响应日志（`log_id` 等）到 status callback，便于排查；考虑使用新的 SDK 异常类型替代泛型 `RuntimeError`。
+- `image_analyzer.py`：引入最大图片尺寸配置与压缩策略（压缩后保留原尺寸信息写入 metadata）。
+
+### 文档与输出
+- `docs`：`MODULE_OVERVIEW.md`、`DESIGN_PRD_TEST.md` 已更新为现状，后续若新增 Prompt 模板，建议拆分出 `docs/PROMPT_REFERENCE.md` 并在 README 只保留链接。
+- `output`：在 `output/evaluations` 追加 `evaluation_scores.tsv`（按时间列出 key 指标）可帮助课程复盘；JSON Schema 校验可选用 `jsonschema` 轻量实现。
 
 ---
 
-## 风险与注意事项
-- 图片压缩可能影响识别质量，需要在体积与质量之间做权衡（分辨率与压缩比可配置）。
-- 环境变量优先策略需在 CLI 与文档中明确，避免与 `config.yaml` 的值产生混淆。
+## 后续行动清单
+1. **安全与配置**：整理凭据读取流程，补充文档说明与示例脚本。
+2. **输出可靠性**：抽象统一 IO 工具，加入原子写与错误日志。
+3. **RAG 与交互体验**：优化历史管理与终端渲染，确保长会话稳定；提供 `/docs status` 之类的可观测命令（可选）。
+4. **外部依赖稳健性**：为 Feishu/多模态调用引入重试与降级策略，完善用户提示。
 
 ---
 
-## 总结
-项目结构清晰、模块边界明确，已良好使用 `langchain` 生态与终端交互库。以上建议以“配置化、可观测性、稳定性”为导向，优先落地密钥安全与配置抽取、输出与评测的工程化增强，再逐步优化解析策略与交互体验。
+项目当前交付质量良好，建议按照上表优先级推进，以“安全配置 → 可观测性 → 交互体验 → 外部依赖稳健”顺序迭代。

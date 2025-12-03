@@ -226,6 +226,38 @@ class CommandHandler:
                 candidate_path=candidate,
                 output_path=output,
             )
+            # After saving report, print concise scores per section and total
+            try:
+                from pathlib import Path as _Path
+                import json as _json
+                data = _json.loads(_Path(report_path).read_text(encoding='utf-8'))
+                results = data.get('results', [])
+                name_to_score = {}
+                for item in results:
+                    name = str(item.get('name') or '').strip()
+                    score = item.get('score')
+                    if isinstance(score, (int, float)) and name:
+                        name_to_score[name] = float(score)
+                # Extract three main sections if present
+                keys = ['alignment', 'coverage', 'bug_prevention']
+                scores = [name_to_score.get(k) for k in keys]
+                # Filter None values
+                present_scores = [s for s in scores if isinstance(s, (int, float))]
+                total = sum(present_scores) / len(present_scores) if present_scores else None
+                # Print concise lines
+                # Build single-line, spacing-separated output
+                parts = []
+                for k, s in zip(keys, scores):
+                    if s is not None:
+                        val = int(s) if float(s).is_integer() else round(float(s), 2)
+                        parts.append(f"{k}: {val}")
+                if total is not None:
+                    parts.append(f"total: {round(float(total), 2)}")
+                if parts:
+                    self.console.print("  ".join(parts))
+            except Exception:
+                # Silent fallback; report already logged by core
+                pass
         except Exception as exc:
             self.console.print(f"[red]Failed to evaluate cases: {exc}[/red]")
 

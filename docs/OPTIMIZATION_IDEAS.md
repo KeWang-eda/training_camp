@@ -1,34 +1,50 @@
 # LangChain 终端助手优化建议
 
-> 依据 `python_langchain_cn` 教程中的模块化设计理念（参见 `/docs/modules/chains/index.mdx`、`/docs/modules/agents/index.mdx`、`/docs/modules/memory/index.mdx`），结合当前终端项目的实现，梳理后续可演进的方向。本文暂不改动代码，仅作为评估材料。
+> 结合 `python_langchain_cn` 教程中“链、Agent、Memory”最佳实践，针对 2025-12-03 版本的实现盘点后续可演进方向。本文仅提出思路，不直接改动代码。
 
-## 1. 链式（Chain）拆分更清晰
-- **问题**：`TerminalChatbotCore.run_testcase_generation` / `_ingest_segments` 中混合了数据收集、prompt 构造、LLM 调用、落盘等逻辑，导致复用困难。
-- **建议**：参照教程中“链 = 组件序列”的思路（`python_langchain_cn/docs/modules/chains/index.mdx`），把“上下文拼接 → prompt 渲染 → LLM 调用 → 输出格式化”拆成 LCEL/Runnable 链；这样后续可将链暴露为可测试单元，也可快速插入新的链（如自省、审阅链）。
+## 1. 生成/评测链路解耦
+- **现状**：`TerminalChatbotCore` 同时负责上下文构造、Prompt 渲染、模型调用、落盘；逻辑集中使得测试与复用成本较高。
+- **建议**：参照“LCEL = 可组合 Runnable 链”（`python_langchain_cn/docs/modules/chains/index.mdx`），将“上下文拼接 → Planner → Builder → 渲染”拆分为独立 Runnable，评审链亦同。这样可以：
+  - 为 Planner/Builder/Renderer 分别编写单元测试；
+  - 支持插入额外环节（如自省、回写修订）而无需修改 Orchestrator；
+  - 暴露链配置，方便脚本或服务模式复用。
 
-## 2. 引入工具化 Agent 处理多类型文档
-- **问题**：当前 `/read` `/read_link` 完全依赖硬编码流程；若未来需要自动判断“是本地文档/Feishu/URL/数据库”并选择不同处理器，需要手动添加分支。
-- **建议**：根据教程中代理“基于工具选择动作”的模式（`python_langchain_cn/docs/modules/agents/index.mdx`），封装一个轻量 Agent：给它的工具包括 `ingest_local_files`、`ingest_feishu_document`、`ingest_web_url`（预留）。CLI 传入指令后由 Agent 判断调用哪个工具，可减少 if/else，同时保留扩展空间（如后续接 SDK、图像 OCR 工具）。
+## 2. 工具化 Agent 的摄取策略
+- **现状**：`/read` 与 `/read_link` 通过 if/else 选择不同处理器，未来若新增 URL/数据库/云盘，需要继续堆叠分支。
+- **建议**：引入轻量 Tool Agent（`python_langchain_cn/docs/modules/agents/index.mdx`），定义 `ingest_local_files`、`ingest_feishu_document`、`ingest_web_url`（预留）等工具，让 Agent 根据输入自动选择执行。优势：
+  - CLI 层保持单一命令 `/ingest`，降低用户心智负担；
+  - 后续扩展只需注册新工具，避免改动核心流程；
+  - 可记录工具调用日志，为摄取链压测提供数据。
 
-## 3. 记忆与上下文管理
-- **问题**：`loaded_segments` 只是简单列表，`ask()` 时未区分“对话记忆（chat_history）”与“文档记忆”，长对话易超 token；而 LangChain 建议将聊天消息与向量上下文分开管理。
-- **建议**：参考 Memory 教程（`python_langchain_cn/docs/modules/memory/index.mdx`）使用 `RunnableWithMessageHistory` 或自定义 Memory，将 chat_history / 文档摘要 / 最近 RAG 结果分层保存；同时可在 `case_health`、`run_evaluation` 中调用 Memory 以回溯不同版本的评测结果。
+## 3. 记忆体系分层与统一
+- **现状**：`MemoryManager` 已托管聊天/文档摘要/评审历史，但 `TerminalChatbotCore` 仍维护一份 `conversation_history`。RAG 历史与对话记忆尚未统一。
+- **建议**：对标 Memory 教程（`python_langchain_cn/docs/modules/memory/index.mdx`），实现：
+  - 使用 `RunnableWithMessageHistory` 统一管理对话记忆，避免双份缓存；
+  - 文档摘要、最新评审结果继续存入 Memory，由链路按需读取；
+  - 为 `/generate_cases` 和 `/evaluate_cases` 添加“引用历史上下文”的显式开关，减少 token 压力。
 
-## 4. 多阶段生成与评测
-- **问题**：用例生成→评测仍是单轮调用；无法按需求拆分为“生成 → 审阅 → 评测 → 修订”。
-- **建议**：借鉴 Chains+Agents 教程，构建一个“计划型”链：
-  1. 规划阶段（Planner Agent）列出需要生成的测试模块。
-  2. 针对每个模块调用生成链。
-  3. 由评测链（Evaluation Agent）给出反馈，再写回报告。
-  这种结构便于复用，也符合 LangChain “Plan-and-execute” 的最佳实践。
+## 4. 多阶段生成/评审闭环
+- **现状**：当前流程是“生成一次 → 评审一次”，评审建议不会自动触发修订。
+- **建议**：尝试“Plan → Execute → Review → Refine”的分阶段策略：
+  1. Planner 产出模块计划；
+  2. Builder 按模块生成初稿；
+  3. Evaluation Agent 给出结构化建议；
+  4. Refinement 链读取建议自动补齐缺失用例，或在终端提示交互；
+  这可以借鉴 LangChain ReAct / Plan-and-execute 模式，形成闭环并减少人工手动修订次数。
 
-## 5. 配置与 Prompt 体系
-- **问题**：`config.yaml` 中 prompt 目前集中在 `testcase_modes`、`evaluation_metrics`，但图片分类/描述 prompt 只有一个 classifier + 各类型 prompt；缺少默认 fallback、prompt 版本记录。
-- **建议**：引入类似 tutorial 中的“Toolkits + PromptTemplate”概念，为每类任务（生成 / 评测 / 图片分类）维护 `version`、`author`、`last_review` 字段，未来可基于版本控制进行离线评测对比。
+## 5. Prompt 元数据与版本资产化
+- **现状**：`testcase_modes`、`image_prompts` 已附带 `metadata.version`，但缺少作者、最近验证时间等信息，也没有集中对比工具。
+- **建议**：
+  - 维护 `docs/PROMPT_REGISTRY.md`，记录每个 Prompt 的 `version/owner/last_review/测试记录`
+  - 配合脚本将 `config.yaml` 中的 prompt 导出成单独文件，便于 diff 与灰度；
+  - 在 `/evaluate_cases` 报告 metadata 中写入 prompt 版本，支持回溯“哪套模板导致评审波动”。
 
-## 6. 评测指标接口
-- **问题**：当前 `case_health` 仍是占位实现；`evaluation_metrics` 全靠 LLM+Prompt，缺少结构化输出（如 JSON）。
-- **建议**：定义 `EvaluationResult` 数据结构，支持 `score`, `rationale`, `suggestions` 字段；配合教程中的 “LangChain 评估” 章节思路，可把 LLM 结果解析为结构化数据，再汇总成报告。
+## 6. 观测与性能优化
+- **现状**：`EvaluationEngine._infer_level` 对相同文本多次调用 LLM；文件写入缺少原子性；脚本执行日志主要依赖文本。
+- **建议**：
+  - 为 `_infer_level` 增加最近 N 条 LRU 缓存，或引入局部规则（如关键字映射）减少重复调用；
+  - 抽象 `utils/io.py` 实现原子写入（临时文件 + `Path.replace`），同时对写入结果加上 structured log；
+  - 扩展脚本日志为 JSON Lines（命令 + 时长 + 成功/失败 + 输出路径），便于数据分析。
 
 ---
-以上建议优先级可按下述顺序推进：①链式拆分 → ②评测结构化 → ③Agent 化摄取 → ④Memory 分层 → ⑤配置元数据化。这样既能保证代码清晰，也方便引用 LangChain 官方教程中的最佳实践。
+**优先级建议**：① 生成/评审链路解耦 → ② 记忆统一 → ③ Agent 化摄取 → ④ Prompt 资产管理 → ⑤ 观测与性能调优。这样既能保持现有功能稳定，又能沿 LangChain 官方最佳实践逐步演进。

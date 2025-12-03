@@ -1,134 +1,133 @@
-# LangChain 终端助手 → PRD 测试用例生成器升级方案
+# LangChain 终端助手 → PRD 测试工作台设计说明
 
-## 目标概述
-在保持“无前端、纯终端交互”形态不变的前提下，将现有 CLI 聊天机器人升级为一个围绕 **PRD→测试用例生成** 与 **离线评测** 的工作台，并增强图片/链接解析、Prompt 配置、指标计算等能力，使之能够满足 Coursework 中的真实需求。
+> 文档聚焦 2025-12-03 的实现版本，阐述终端助手如何闭环“需求摄取 → 测试用例生成 → 离线评审”，并给出配置映射、模块职责与迭代方向。
 
 ---
 
-## 总体架构
+## 1. 目标与约束
+- **形态**：保持纯终端交互，依赖 `prompt_toolkit` + `rich` 完成 REPL、脚本执行与流式输出。
+- **能力闭环**：从 PRD / 图片 / 飞书文档摄取上下文，生成结构化测试用例，并根据统一指标输出评审报告。
+- **配置驱动**：全部 Prompt、模板、模型配置集中在 `config.yaml`，支持 CLI 参数与环境变量覆盖。
+- **可追溯**：所有产物附带生成时间、配置哈希，最近用例路径缓存到磁盘，支持后续评审引用。
+
+---
+
+## 2. 目录骨架
 
 ```
 training_camp/
-├── cli.py                          # 交互入口，新增场景指令/模式切换
-├── config.yaml                     # 全量配置：模型、Feishu、Agent Prompt、图片分类 Prompt、命令等
-├── src/                            # chatbot / terminal / utils 模块
-├── docs/                           # DESIGN_PRD_TEST、MODULE_OVERVIEW 等
-├── output/                         # 生成的用例 & 评测报告
-├── pipeline/                       # 课程示例 / 数据脚本
-├── scrpits/                        # `.tcl` / `.txt` 批处理脚本
-└── langchain-chatbot/              # 老版本代码备份（如需参考）
+├── cli.py                    # 终端入口 & 脚本执行
+├── config.yaml               # 模型、Prompt、评测、输出路径配置
+├── src/
+│   ├── chatbot/              # 业务核心（RAG、生成、评审、内存）
+│   ├── terminal/             # 命令解析、流式渲染
+│   └── utils/                # Feishu、多模态工具
+├── docs/                     # 架构/评审/优化文档
+├── output/                   # 用例与评审结果（运行时生成）
+├── pipeline/                 # 课程示例脚本
+├── scrpits/                  # `.tcl`/`.txt` 批量命令脚本
+└── langchain-chatbot/        # 历史代码备份
 ```
 
 ---
 
-## 功能改造拆解
+## 3. 核心流程
 
-### 1. Prompt 管理与 Agent 初始化
-- `config.yaml.app.system_prompt`: 作为**默认 Agent Prompt**。允许多套配置（可新增 `agents` 数组，支持 `/switch_agent <name>`）。
-- `commands` 段继续承载通用指令；`/generate_cases`、`/evaluate_cases` 改为“内置命令”。
-- 新增 `image_prompts` 配置块：
-  ```yaml
-  image_prompts:
-    diagram_classifier_prompt: "... 如何判定是流程图/实体图 ..."
-    flow_chart_prompt: "... 针对流程图的抽取步骤 ..."
-    ui_mock_prompt: "... UI 截图提取控件与状态 ..."
-  ```
-  => ImageAnalyzer 先跑分类 prompt，再根据类型调用对应模板生成结构化描述。
+### 3.1 启动与配置
+1. `cli.py` 解析 `--config/-f/--log-file` 参数，加载 YAML 配置并生成 12 位 `config_hash`。
+2. 通过 `resolve_setting` 依次读取配置值、环境变量（如 `KIMI_API_KEY`）、兜底默认值，确保密钥可外置。
+3. 构造 `TerminalChatbotCore` 与 `CommandHandler`，准备 PromptSession 或脚本执行环境。
 
-### 2. 文档/图片/链接输入
-- 保持 `/read` `/read_link`，但在 `ContentProcessor` 里将每份素材转换为 **统一的 PRD 片段结构**：
-  ```python
-  {
-    "type": "text/pdf/image/link",
-    "source": "...",
-    "content": "...",
-    "meta": {"image_type": "flow_chart", ...}
-  }
-  ```
-- 图片处理流程：
-  1. 统一使用视觉模型（如 moonshot 8k vision）。
-  2. 先调用 `diagram_classifier_prompt` 判断类型。
-  3. 根据类型套入自定义 prompt 生成 JSON（字段：type/summary/key_elements/risks），存入 `content`。
-  4. 保留原图路径到 `meta`，方便溯源。
+### 3.2 文档摄取 / RAG 准备
+1. `/read` → `ContentProcessor.process_local_files`：按后缀识别文本、文档、图片，统一产出 `ContentSegment`。
+2. 若配置了多模态模型，图片/文档会调用 `ImageAnalyzer` 分类 + 描述，metadata 中记录类型与标签。
+3. `_ingest_segments` 使用 FastEmbed + FAISS 重建向量库，刷新 `ConversationalRetrievalChain` 并写入 Memory 摘要。
 
-### 3. PRD → 测试用例生成
-- 新增 `/generate_cases [--mode smoke|full --output xxx.md --format md|json --show-thoughts true|false --plan true|false]` 指令（CLI 支持顺序参数与 `mode=... output=... format=... thoughts=... plan=...` 键值写法，`format` 控制落盘格式，`thoughts` 控制 Planner Panel，`plan` 控制“测试方案摘要”展示）。
-- 流程：
-  1. `TerminalChatbotCore.run_testcase_generation()` 读取当前所有已索引文档内容（可按 chunk 或主题聚合）。
-  2. 调用配置中的 `testcase_generation_prompt`（可嵌入图片描述/Feishu内容），并基于 `testcase_layouts.<layout>` 注入字段 schema（`{layout_schema}`），要求 LLM 以 JSON 输出 `module_goal + cases[]`。
-  3. 框架解析 JSON→`TestcaseDocument`，打包 `plan_summary`（来自模板 checklist），并按用户指定的 `format` 渲染为 Markdown/JSON 保存到 `./output/testcases/<timestamp>.md|json`（默认 JSON，包含 `metadata = {generated_at, config_hash}`）；若 `plan=true` 则在终端以 Rich Panel 展示 checklist。
-  4. 若提供 `--mode smoke` 则仅生成关键场景；`--mode full` 生成完整覆盖。
+### 3.3 对话
+- 普通消息走 `_BasicConversationChain`，若存在向量库则切换到 RAG 链路；历史记录同时写入 `conversation_history` 与 `MemoryManager`（计划合并为后者）。
 
-### 4. 自动化评测
-- `/evaluate_cases --baseline path/to/manual.md --candidate path/to/generated.json`
-- 流程：
-  1. 自动解析输入文件：若 `candidate` 缺失，则使用 `latest_testcase_cache` 中记录的最近一次 `/generate_cases` 结果；若 `baseline` 缺失，则注入占位说明。
-  2. 指标全部定义在 `config.evaluation.review_metrics`（示例：alignment / coverage / bug_prevention），每个指标都要求 LLM 输出 `{"score":0-100,"summary":"...","risks":["..."]}`，并可通过 `format_hint` 强化 JSON 约束。
-  3. `EvaluationEngine` 解析 JSON，将 `score` 按 `risks` 数量套用扣分规则（默认每条 -5，封顶 40），再拼入 `summary`/`suggestions`。
-  4. 报告保存在 `./output/evaluations/<timestamp>_report.json`，`metadata` 含 `generated_at` 与 `config_hash`，方便追溯配置版本。
+### 3.4 测试用例生成
+1. `/generate_cases` 支持位置参数或 `mode=... output=... format=... thoughts=true plan=true` 键值写法。
+2. `TerminalChatbotCore.run_testcase_generation`：
+   - 读取 `testcase_modes[mode]` 获取 Planner/Builder Prompt、上下文长度与布局 key。
+   - `TestcaseGenerator.generate`
+     - `_build_context` 拼接文档片段与 Memory 摘要。
+     - `_plan_modules` 调用 Planner Prompt 产出模块列表。
+     - `_build_cases` 注入 `{layout_schema}` 执行 Builder Prompt → 解析 JSON → 生成 `TestcaseDocument`。
+   - 按 `output_format` 渲染 Markdown/JSON，头部写入 `generated_at` 与 `config_hash`，文件名为 `YYYYMMDD_HHMMSS_<mode>.{md|json}`。
+   - 更新 `output/latest_testcase.json` 缓存路径。可选展示 Planner 思考与“测试方案摘要”。
 
-### 5. CLI 交互增强
-- `/help` 列出新命令。
-- `/show_docs`：查看当前索引的文档列表（含来源、类型）。
-- `/switch_agent <name>`（可选）：在 config 中预定义多套 `agents`（system prompt + 定制命令）。
-- `/config info`：打印当前关键配置（模型、图片 prompt、Feishu 状态等）。
+### 3.5 自动评审
+1. `/evaluate_cases [baseline] [candidate] [output]`：参数缺省时，baseline 使用占位提示，candidate 自动引用最近生成的用例。
+2. 结合 `evaluation.review_metrics` 构造评审任务：
+   - `EvaluationEngine._run_structured_review` 强制模型返回 JSON，兼容 `suggestions`/`risks`，并通过 `_infer_level` 推断优先级（默认 P0-P9 → 扣分 10~1）。
+   - 同时执行 `evaluation_metrics` 补充扩展指标（若配置）。
+3. 汇总结果写入 `output/evaluations/YYYYMMDD_HHMMSS_report.json`，终端即时输出 alignment/coverage/bug_prevention 评分摘要。
+4. 评审记录保存到 `MemoryManager`，便于会话中的后续追问。
+
+### 3.6 脚本执行
+- `python cli.py --config config.yaml -f scrpits/nightly.tcl`：逐行执行命令，支持注释、自动终止；执行轨迹追加到 `config.paths.script_log`。
 
 ---
 
-## 调用关系
+## 4. 配置映射
 
-```mermaid
-flowchart LR
-    CLI[/cli.py/] --> handler[CommandHandler]
-    handler --> core[TerminalChatbotCore]
-    core --> dp[ContentProcessor]
-    core --> ia[ImageAnalyzer]
-    core --> feishu[FeishuDocClient]
-    core --> chatbot[ChatbotCore]
-    chatbot --> llm[ChatOpenAI]
-    handler --> commands[config.yaml.commands]
-    core --> prompts[config.yaml.image_prompts & testcase prompts]
-```
-
----
-
-## 命名与代码规范
-- 保持 `snake_case`，遵循 Google Python 风格。
-- 新增函数命名建议：
-  - `ContentProcessor.build_content_segments()`
-  - `ImageAnalyzer.classify_image_type()`
-  - `TerminalChatbotCore.run_testcase_generation()`
-  - `TerminalChatbotCore.run_evaluation()`
-- CMD 参数解析统一集中在 `CommandHandler`，避免 CLI 入口膨胀。
+| 区块 | 说明 | 关键字段 |
+| --- | --- | --- |
+| `app` | 模型与终端行为 | `api_key`、`default_model`、`image_*`、`history_limit`、`banner` |
+| `processing` | RAG 参数 | `embedding_model`（默认 `BAAI/bge-small-zh-v1.5`）、`text_splitter.chunk_size/overlap` |
+| `image_prompts` | 图片分类与描述 | `classifier`、`default`、`types[*]`（key/label/prompt/metadata） |
+| `feishu` | 飞书凭据 | `app_id`、`app_secret`、`base_url` |
+| `testcase_modes` | 用例生成模式 | `planner_prompt`、`builder_prompt`、`context_limit`、`layout`、版本元数据 |
+| `testcase_layouts` | 模板 Schema | `case_fields`（字段顺序、必填）、`plan_sections`（计划检查项） |
+| `evaluation.review_metrics` | 结构化评审 | 每项包含 `name`、`prompt`、`system_prompt`，默认三指标 |
+| `evaluation_metrics` | 扩展打分 | 可选项，接口同 `review_metrics`，当前为空列表 |
+| `commands` | 自定义聊天命令 | 模板可引用 `{history}`、`{args}` |
+| `outputs` | 默认落盘策略 | `testcases.default_dir/default_format`、`evaluations.default_dir` |
+| `paths` | 缓存/日志 | `latest_testcase_cache`（最近用例）、`script_log` |
 
 ---
 
-## 交付产物
-1. **代码实现**：上述模块改造 + 新函数。
-2. **配置样例**：`config.yaml` 里包含不同图片 prompt、测试生成 prompt、评测指标。
-3. **文档**：
-   - `docs/DESIGN_PRD_TEST.md`（本规划）；
-   - `README` 更新新命令；
-   - `USAGE_CN.md` 标明如何准备人工用例、如何运行评测。
-4. **示例数据**：
-   - `data/manual_cases/sample.md`：人工写的基准用例；
-   - `./output/testcases/example.json`、`./output/evaluations/example.json` 展示终端输出格式。
+## 5. 主要模块职责（简版）
+
+| 模块 | 责任 | 备注 |
+| --- | --- | --- |
+| `cli.py` | 解析参数、加载配置、驱动 PromptSession/脚本模式、构造核心对象 | `config_hash` 在此计算并透传 |
+| `chatbot.chatbot_core` | 管理 LLM、Embedding、FAISS，生成基础 or RAG 会话链 | `_BasicConversationChain` 为轻量兜底 |
+| `chatbot.content_processor` | 解析文本/文档/图片 → `ContentSegment` | 依赖 `ImageAnalyzer` 完成分类与描述 |
+| `chatbot.terminal_chatbot_core` | Orchestrator：摄取、对话、生成、评审、输出落盘、缓存维护 | `_write_output` 统一命名与目录策略 |
+| `chatbot.testcase_generator` | Planner + Builder 双阶段生成，结构化/Markdown 序列化 | 解析失败时保留 `fallback_content` |
+| `chatbot.evaluation_engine` | 结构化评审、风险扣分、结果归档 | `_infer_level` 需要多次 LLM 调用（可缓存） |
+| `chatbot.memory_manager` | 存储聊天、文档摘要、评审历史 | `get_document_overview` 为上下文前缀 |
+| `terminal.command_handler` | 内置命令解析、自定义命令执行、计划面板渲染 | `/generate_cases` 兼容位置/键值混合参数 |
+| `terminal.stream_handler` | LLM 流式输出，手动处理代码块高亮 | 后续可替换为 `rich.syntax` |
+| `utils.feishu_client` | 飞书 RawContent 拉取，输出 JSON 字符串 | 需补充重试/可读错误提示 |
+| `utils.image_analyzer` | OpenAI 多模态封装，支持分类与描述 | 目前未做图像压缩 |
 
 ---
 
-## 迭代建议
-- 第一阶段：完成输入解析 + `/generate_cases` + `/evaluate_cases`（LLM 指标即可）。
-- 第二阶段：加规则/Embedding 检查（步骤覆盖率等）。
-- 第三阶段：考虑接入多代理流程（如 LangGraph，生成→审阅→评测 pipeline）。
+## 6. 命令速览
+
+| 命令 | 说明 | 典型用法 |
+| --- | --- | --- |
+| `/read` | 读取本地文件并建立向量库 | `/read docs/prd.md screenshot.png` |
+| `/read_link` | 通过链接/ID 拉取飞书文档 | `/read_link https://feishu.cn/docx/...` |
+| `/generate_cases` | 生成测试用例，支持模式/格式/展示选项 | `/generate_cases mode=smoke thoughts=true plan=true` |
+| `/evaluate_cases` | 按配置指标评审用例 | `/evaluate_cases manual.md latest.json`；`/evaluate_cases`（全默认） |
+| `/history` | 查看最近对话 | `/history` |
+| `/save` | 导出对话历史 | `/save conversation.txt` |
+| 自定义命令 | 基于 `config.commands` | `/summarize`、`/suggest xxx` |
+| 脚本模式 | 批量执行命令文件 | `python cli.py --config config.yaml -f scrpits/demo.tcl` |
 
 ---
 
-通过上述规划，可以在当前终端框架上实现 PRD→测试用例生成与自动评测闭环，同时保留图片/链接扩展能力，并让所有 Prompt/模型选择都可在 `config.yaml` 中自定义。这样既满足 Coursework 要求，也便于后续灵活迭代。
+## 7. 迭代方向
+1. **安全与配置**：移除配置文件中的明文凭据，提供 `.env.example` 与自动校验脚本。
+2. **输出可靠性**：引入原子写入与异常日志归档，避免半写文件。
+3. **RAG 累积与观测性**：支持追加索引、提供 `/docs status` 等观测命令，并整合历史管理。
+4. **多模态与外部集成稳健性**：为 Feishu 请求和图片分析添加重试/超时/降级策略，压缩大图减少 token 成本。
+5. **体验优化**：终端渲染替换为 Rich 原生 Markdown/语法高亮；Planner/Builder 提供温度、模型切换配置。
 
-### 核心类职责
-- `ContentProcessor`：统一将本地/Feishu/图片内容转为 `ContentSegment`（type/source/content/metadata）。
-- `TerminalChatbotCore`：持有 `loaded_segments`、向量索引、并协调生成/评测流程。
-- `TestcaseGenerator`（嵌入在 TerminalChatbotCore 中的 `run_testcase_generation`）：根据 `testcase_modes` prompt 生成结构化 `TestcaseDocument`，默认落盘 JSON。
-- `EvaluationEngine`（`run_evaluation`）：解析 `review_metrics` 的 JSON 输出，根据 `risks` 自动扣分；若需要额外 Prompt，可在 `evaluation_metrics` 中扩展。
+---
 
-- `TerminalChatbotCore`：负责装配上下文、触发生成/评测流程、维护最新用例路径缓存，以及统一的结果落盘逻辑（`./output/testcases`、`./output/evaluations`）。
+当前实现已完成 Coursework 所需的“需求摄取 → 用例生成 → 评审”全流程；后续迭代可围绕安全性、稳定性与可观测性持续增强。

@@ -1,86 +1,144 @@
-# ByteDance Training Camp
+<div align="center">
 
-终端形态的 LangChain 助手已经迁移至 `ByteDance/training_camp` 仓库。当前项目在保留原有功能的同时，统一了根目录结构，便于与其他训练营模块协同开发。所有行为依旧由根目录的 `config.yaml` 驱动，可在不改代码的情况下调整模型、Prompt、命令、测试模板与评估指标。
+# Training Camp
 
-## ✨ 特性
-- **终端优先体验**：`prompt_toolkit` + Rich 实现命令历史、流式输出与代码块渲染。
-- **统一摄取**：`ContentProcessor` 会把文本、文档、图片和飞书 Wiki 归一为 `ContentSegment`，图片会自动分类（流程图/架构图/UI 等）后套用不同 Prompt。
-- **PRD→测试用例闭环**：`TestcaseGenerator` 返回 `TestcaseDocument` 对象，默认序列化为 JSON 并写入 `outputs.testcases.default_dir`；通过 `format=markdown` 可切换 Markdown。
-- **离线评测**：`/evaluate_cases` 自动读取 `evaluation.review_metrics` 中的 Prompt，逐项生成 0-100 分的 JSON，并根据“缺失测试点”列表动态扣分（默认每条 -5，封顶 -40），无需人工复核即可得出总体结论。
-- **脚本批处理**：`python cli.py --config config.yaml -f run.txt` 可顺序执行 `.tcl/.txt` 中的命令，终端与 `./output/logs/shell.log` 日志同步写入，方便 nightly 任务或多源评测。
-- **可选“思考过程 & 测试方案”**：`/generate_cases thoughts=true` 时展示 Planner 模块列表，`plan=true` 可额外展示“测试方案摘要” checklist（功能/兼容/性能/安全）。
-- **Config 驱动**：API Key、系统 Prompt、图片分类 Prompt、测试模板、评测指标、自定义命令等都集中在 `config.yaml`。
+终端态 LangChain 助手，由后端驱动完成多源资料摄取、上下文组织与模型编排。项目聚焦：在 `config.yaml` 中集中配置命令、Prompt、模型与输出；提供可扩展的测试用例生成流程（规划→生成）与结构化评审接口；支持文本、图片、飞书 Wiki 等输入渠道，并内置脚本批处理能力以串联前端和自动化任务。当前评审模块以大模型实现，接口已预留，可随时切换到自研评分体系。
 
-## 🛠️ 推荐开发环境
-- **操作系统**：Linux x86_64（在 `training_camp` Conda 环境验证）。
-- **Python**：3.12（`requirements.txt` 已 pin `numpy<2` 以兼容 `faiss-cpu==1.8.0`）。
-- **依赖管理**：Conda + pip。
-- **必要依赖**：`langchain>=0.3.13`、`langchain-openai`、`fastembed`、`prompt_toolkit`、`rich`、`lark-oapi`、`openai`、`faiss-cpu`。
+</div>
 
+---
+
+## 目录
+- [Training Camp](#training-camp)
+  - [目录](#目录)
+  - [简介](#简介)
+  - [核心能力](#核心能力)
+  - [架构总览](#架构总览)
+  - [系统目录](#系统目录)
+  - [环境准备](#环境准备)
+  - [快速开始](#快速开始)
+  - [常用命令](#常用命令)
+  - [配置指南](#配置指南)
+  - [批处理场景](#批处理场景)
+  - [文档](#文档)
+  - [路线图](#路线图)
+  - [贡献与致谢](#贡献与致谢)
+  - [参考项目](#参考项目)
+
+## 简介
+将 PRD、文档、图片与飞书 Wiki 统一摄取为上下文，按模板生成结构化测试用例，并利用可替换的评审接口完成初步质量评估。所有能力均由 `config.yaml` 驱动，后端可在不改代码的前提下扩展命令、Prompt 与评分策略。
+
+
+![终端 Demo](docs/demo.gif)
+
+
+## 核心能力
+- **多源摄取**：`ContentProcessor` 将文本/图片/飞书链接归一为 `ContentSegment`，图片自动按 `image_prompts` 分类应用对应 Prompt。
+- **命令体系可配置**：在 `config.yaml` 的 `commands` 段定义自定义命令（如总结、润色、重写 PRD），终端即时可用。
+- **Prompt 策略可控**：`testcase_modes`、`testcase_layouts`、`image_prompts` 提供多模板与版本化能力，支持快速迭代不同生成策略。
+- **测试用例生成**：`TestcaseGenerator` 采用“规划 → 生成”双阶段流程，输出 JSON 或 Markdown，并维护 Planner 摘要与用例模块结构。
+- **结构化评审**：`EvaluationEngine` 基于 `evaluation.review_metrics` 生成评分/摘要/风险列表，保留接口以便替换为自研评分器。
+- **脚本批处理**：`cli.py -f` 与 `pipeline/run_all_scripts.sh` 支持 `.tcl/.txt` 脚本串行执行，便于夜间任务或批量评测。
+
+## 架构总览
+- **入口层**：`cli.py` 负责 REPL 与脚本模式，统一解析 `config.yaml` 并初始化核心组件。
+- **终端交互**：`src/terminal/command_handler.py` 解析 `/命令`，`src/terminal/stream_handler.py` 负责流式输出与格式化。
+- **生成核心**：`src/chatbot/testcase_generator.py`（计划+生成）、`src/chatbot/chatbot_core.py`（LLM/RAG 管理）、`src/chatbot/memory_manager.py`（摘要与缓存）。
+- **评审体系**：`src/chatbot/evaluation_engine.py` 输出结构化 JSON，支持风险扣分与建议优先级推断。
+- **资料处理**：`src/chatbot/content_processor.py` 统一文本/图片/链接，`src/utils/feishu_client.py` 负责飞书 API 交互。
+
+![架构示意图](docs/Architecture_Diagram.png)
+
+## 系统目录
+```
+training_camp/
+├── cli.py                     # 终端入口（REPL / 脚本模式）
+├── config.yaml                # 模型、Prompt、命令、输出、评审配置
+├── docs/                      # 设计/评审/模块说明等项目文档
+├── output/                    # 生成的用例与评估结果
+├── pipeline/                  # 批处理脚本与辅助资源
+├── scrpits/                   # .tcl/.txt 批量命令脚本
+├── src/
+│   ├── chatbot/               # 生成、评审、内容处理、记忆管理
+│   ├── terminal/              # 命令解析与流式输出
+│   └── utils/                 # 飞书客户端、图片分析
+└── langchain-chatbot/         # 历史版本备份（只读）
+```
+
+## 环境准备
+- 操作系统：Linux x86_64（当前在终端 Conda 环境验证）
+- Python：3.12（`requirements.txt` 已锁 `numpy<2`，兼容 `faiss-cpu==1.8.0`）
+- 安装步骤：
 ```bash
 conda create -n training_camp python=3.12 -y
 conda activate training_camp
 pip install -r requirements.txt
 ```
+- 若 `lark-oapi` 出现兼容问题：`pip install lark-oapi==1.4.24`
 
-> 如安装 `lark-oapi` 报版本不匹配，请改用 `pip install lark-oapi==1.4.24`（与当前 SDK 兼容 Python 3.12+）。
+## 快速开始
+1. 在 `config.yaml` 的 `app` 段或环境变量中填入 API Key（文本模型与图片模型）。
+2. 如需读取飞书资料，配置 `feishu.app_id` 与 `feishu.app_secret`。
+3. 运行终端：
+   ```bash
+   python cli.py --config config.yaml
+   ```
+4. 使用 `/read <路径>`、`/read_link <feishu_url>` 导入资料，随后执行 `/generate_cases`、`/evaluate_cases` 生成并评审测试用例。
 
-## 🚀 快速开始
-```bash
-# 运行 CLI，默认读取 config.yaml
-python cli.py --config config.yaml
-```
+> 截图/GIF占位：read → generate → evaluate 的完整终端流程。
 
-1. 在 `config.yaml` 的 `app` 段填入文本模型与图片模型的 API Key（或通过环境变量 `KIMI_API_KEY` / `KIMI_IMAGE_API_KEY`）。
-2. 若需要读取飞书链接，填写 `feishu.app_id` 与 `feishu.app_secret`。
-3. 在终端执行 `/read 文件路径...`、`/read_link <feishu_url>` 把资料载入，再使用 `/generate_cases`、`/evaluate_cases`。
-
-## 📦 目录概览
-```
-training_camp/
-├── cli.py                        # REPL 入口，加载配置并初始化核心
-├── config.yaml                   # 所有模型、Prompt、命令、第三方配置
-├── docs/                         # DESIGN_PRD_TEST / MODULE_OVERVIEW 等文档
-├── output/                       # 默认生成的用例与评测结果
-├── pipeline/                     # 训练营课程示例 / 数据管道
-├── scrpits/                      # `.tcl` / `.txt` 批处理脚本
-├── src/
-│   ├── chatbot/                  # chatbot_core、testcase_generator、evaluation_engine
-│   ├── terminal/                 # command_handler、stream_handler
-│   └── utils/                    # feishu_client、image_analyzer 等
-└── langchain-chatbot/            # 老版本代码备份（只读）
-```
-
-## 🧮 核心命令
-| 命令 | 说明 | 主要参数 |
+## 常用命令
+| 命令 | 说明 | 常用参数 |
 | --- | --- | --- |
-| `/help` | 查看命令列表 | – |
-| `/read <path...>` | 读取文件并向量化 | 文件路径列表 |
-| `/read_link <feishu_url_or_id>` | 拉取飞书文档并索引 | URL 或 token |
-| `/generate_cases [mode] [output] [show_thoughts] [format] [plan]` 或 `/generate_cases mode=smoke output=/tmp/cases.json format=json thoughts=true plan=true` | 生成用例（默认 JSON，目录来自 `outputs.testcases`） | `mode`: 对应 `config.testcase_modes` 键; `output`: 自定义保存路径; `show_thoughts`: 在终端展示 Planner 思考过程; `format`: `markdown`/`json`; `plan`: 是否展示“测试方案摘要” |
-| `/evaluate_cases <baseline> <candidate> [output]` | 对比人工与生成用例；基线缺失时用占位摘要，候选缺失时自动取最近一次 `/generate_cases` 产物；评分按 `review_metrics` + 风险扣分 | `baseline`: 基准 Markdown/JSON；`candidate`: 生成用例；`output`: 评估报告保存路径（默认 JSON） |
-| `/history` `/save [file]` | 查看/保存对话历史 | – |
-| `python cli.py --config config.yaml -f run.txt [--log-file ./output/logs/run.log]` | 以脚本模式批量执行命令（支持 `.tcl` / `.txt`），终端与日志同步输出 | `run.txt` 中每行 1 条命令，支持注释/空行 |
+| `/help` | 查看命令与描述 | – |
+| `/read <path...>` | 读取本地文件并向量化 | 支持多个路径，自动识别文本/图片 |
+| `/read_link <feishu_url>` | 拉取飞书文档并索引 | 需提前配置 `feishu` 凭证 |
+| `/generate_cases` | 生成测试用例（JSON/Markdown） | `mode=default|smoke`、`output=...`、`format=markdown`、`thoughts=true`、`plan=true` |
+| `/evaluate_cases <baseline> <candidate>` | 对比评审并输出 JSON | `output=...` 可指定结果路径 |
+| `/history` `/save [file]` | 查看/保存对话历史 | `file` 默认为配置中的缓存路径 |
+| 自定义命令 | 按 `commands` 配置执行，如 `/summarize`、`/suggest` | 模板支持 `{history}`、`{args}` 注入 |
 
-## ⚙️ 配置提示
-- `app`：模型与系统 prompt；`banner` 控制 REPL 欢迎语；`history_limit` 决定保留的聊天轮数。
-- `image_prompts`：包含 `classifier` Prompt、默认类型、各具体类型（flow_chart/architecture 等）；可随时新增 `types`。
-- `processing.embedding_model` / `processing.text_splitter`：控制 embeddings 模型与文本切分参数（默认 `BAAI/bge-small-en-v1.5`、`chunk_size=1000`、`chunk_overlap=200`）。
-- `testcase_modes`：定义不同生成模式的 `planner_prompt` / `builder_prompt` / `context_limit`，并通过 `layout` 字段关联到 `testcase_layouts`。
-- `testcase_layouts`：声明多套“测试用例模板”，包含字段顺序、必填要求与“测试方案摘要” checklist，LLM 在生成时会读取 Schema（通过 `{layout_schema}` 注入）。
-- `outputs.testcases`：设置 `/generate_cases` 的默认格式与输出目录（默认 JSON + `./output/testcases`），CLI 未显式指定路径时按此落盘。
-- `outputs.evaluations`：设置 `/evaluate_cases` 的默认输出目录（默认 `./output/evaluations`）。
-- `evaluation.review_metrics`：定义 LangChain 评审指标（alignment / coverage / bug_prevention 等），`/evaluate_cases` 输出 JSON，包含 0~100 分、摘要及风险列表；默认每条风险扣 5 分，可在 Prompt 中提示模型按严重度标注；`evaluation_metrics` 可作为补充 prompt。
-- `paths.latest_testcase_cache`：缓存最近一次生成的用例路径，便于 `/evaluate_cases` 默认引用。
-- `paths.script_log`：脚本模式（`-f run.txt`）的日志输出路径，默认 `./output/logs/shell.log`。
-- `commands`：自定义 `/summarize`、`/suggest` 等快捷命令，内部模板支持 `{history}` 与 `{args}`。
-- **配置优先级**：CLI 读取顺序为 `config.yaml` → 环境变量（如 `KIMI_API_KEY`）→ 内置默认值，可在 `.env` 中统一管理敏感信息。
+## 配置指南
+- 所有配置集中在根目录 `config.yaml`；通过调整该文件即可定制模型、命令、Prompt、输出与评分策略。
+- **app**：模型 API、默认模型、系统 Prompt、欢迎 Banner、历史长度。
+- **processing**：`embedding_model` 与 `text_splitter` 控制向量化与分片策略。
+- **image_prompts**：图片分类器与多类型描述 Prompt，支持 `metadata.version` 管理版本。
+- **testcase_modes**：定义 planner/builder Prompt、上下文限制与关联 `layout`。
+- **testcase_layouts**：约束字段顺序、必填项与“测试方案摘要”清单，生成器通过 `{layout_schema}` 强制结构合法。
+- **outputs**：设置用例/评审默认格式及输出目录。
+- **evaluation.review_metrics**：定义评分维度（score/summary/risks），可扩展 metadata 与格式提示。
+- **paths**：缓存最近用例路径、脚本日志位置等。
+- **commands**：声明自定义命令模版，实现前端零改动的指令扩展。
 
-## 📚 更多文档
-- [docs/MODULE_OVERVIEW.md](docs/MODULE_OVERVIEW.md)：逐文件说明、函数职责、后续扩展点。
-- [docs/OPTIMIZATION_IDEAS.md](docs/OPTIMIZATION_IDEAS.md)：参考 `python_langchain_cn` 教程整理的后续演进建议。
+## 批处理场景
+```bash
+# 逐个执行 scrpits/*.tcl，输出与终端一致
+bash pipeline/run_all_scripts.sh
 
-## ✅ 开发者须知
-- 代码遵循 Google Python 命名风格，新增函数请保持 snake_case。
-- 默认使用 `training_camp` Conda 环境进行测试；如需运行自动化脚本，请在同一环境激活后执行。
-- 评测接口 `EvaluationEngine` 遵循“结构化 JSON + 风险扣分”规则：若 LLM 返回 `risks` 列表，则根据条数扣分（默认每条 5 分、封顶 40 分），可在 `evaluation.review_metrics` 中自定义 Prompt 与格式；如需额外统计指标，可在 `evaluation_metrics` 增补。
+# 或直接使用 CLI 脚本模式
+python cli.py --config config.yaml -f scrpits/sample.tcl --log-file ./output/logs/run.log
+```
+- `pipeline/documents`、`pipeline/links` 等目录可存放批处理所需的资料。
+- `paths.script_log` 控制脚本模式日志落盘路径，便于追踪夜间任务。
+
+## 文档
+- `docs/MODULE_OVERVIEW.md`：逐文件说明、职责与扩展点。
+- `docs/DESIGN_PRD_TEST.md`：测试用例生成策略与模板设计。
+- `docs/EVALUATION_PLAN.md`：评审指标与扣分策略。
+- `docs/RUN_SCRIPT_PLAN.md`：批处理方案与注意事项。
+- `docs/OPTIMIZATION_IDEAS.md`：后续演进建议。
+
+## 路线图
+- [ ] 文档与输入：提升 `/read` 与 `/read_link` 的解析与摘要质量（文本/图片/飞书）。
+- [ ] 评审接口抽象：稳定 JSON 契约，允许替换为自研评分器；完善风险项策略与扣分规则。
+- [ ] 模板与模式：增强 `testcase_layouts`/`testcase_modes` 的版本化与维护体验。
+- [ ] Prompt 策略：细化图片类型与文本策略的分层设计，支持版本灰度与对比实验。
+- [ ] 命令扩展：沉淀常用命令集合（润色、结构化重写、质量检查），通过配置直接启用。
+
+## 贡献与致谢
+- 欢迎提交 Issue/PR，保持 snake_case 风格，并在描述中注明背景、变更点、测试方式与影响范围。
+- 致谢：LangChain 生态、Moonshot/Kimi API、prompt_toolkit、rich、fastembed、faiss 等开源组件。
+
+## 参考项目
+- Best README Template: https://github.com/othneildrew/Best-README-Template
+- LangChain Chatbot: https://github.com/shashankdeshpande/langchain-chatbot

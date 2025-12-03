@@ -1,12 +1,27 @@
 pipeline {
-    agent any  // 任意可用的 Jenkins 节点执行（无需指定特定节点，最简单配置）
+    agent any
+
+    environment {
+        PROJECT_ROOT = '/home/wangke/ByteDance/training_camp'
+        PYTHON = 'python'
+        CONDA_ENV = 'training_camp'
+    }
+
     stages {
-        // 单个阶段：仅打印触发提示
-        stage('触发识别') {
+        stage('Evaluate All Scripts') {
             steps {
-                // 核心逻辑：打印提示信息
-                echo "✅ Jenkins Pipeline 已识别到触发！触发成功～"
+                // Run inside conda environment without altering global shell
+                sh "conda run -n ${CONDA_ENV} bash -lc '${PROJECT_ROOT}/pipeline/run_all_scripts.sh'"
             }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline finished.'
+        }
+        failure {
+            echo 'Pipeline failed.'
         }
     }
 }
