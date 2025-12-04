@@ -1,0 +1,1356 @@
+{
+  "metadata": {
+    "generated_at": "2025-12-03T15:28:07.627299",
+    "config_hash": "70d925da4216",
+    "mode": "default"
+  },
+  "document": {
+    "mode": "default",
+    "metadata": {
+      "version": "v1"
+    },
+    "planner_notes": [
+      "功能模块与测试目标（3-5 个）",
+      "1. 高德静态地图渲染",
+      "目标：验证用户点击“目的地”后，系统能在 ≤2 s 内返回并正确渲染指定坐标/比例尺的静态地图，无偏移、无拉伸、无 404/403 错误。",
+      "2. 商城入口天气&定位联动",
+      "目标：确认点击“商城”后，搜索框周边实时天气卡片与定位图标同步出现，天气数据与定位城市一致，且定位精度 ≤100 m。",
+      "3. 攻略多服务聚合（POI/路径/交通态势）",
+      "目标：一次性调用后，接口返回的 POI 列表、路径规划、交通态势、天气、输入提示 5 类数据字段完整、无空值，且各子接口总耗时 ≤3 s。",
+      "4. 百度 OCR 图像识别链路",
+      "目标：从“图片标识”→相册/拍照→上传→识别→返回景点信息，端到端 ≤5 s；识别准确率 ≥90%（Top1 景点名称匹配），支持 JPG/PNG ≤5 MB。",
+      "5. 异常与降级策略",
+      "目标：当高德或百度 API 返回 4xx/5xx、QPS 超限或网络超 10 s 时，前端给出友好提示并自动降级（如缓存地图、显示“服务暂不可用”），无 Crash/ANR。"
+    ],
+    "plan_summary": [
+      {
+        "title": "功能覆盖",
+        "checklist": [
+          "使用等价类、边界值、场景法覆盖主干与异常流程。",
+          "核对模块依赖与互斥逻辑，防止改动牵连。",
+          "重点模块：功能模块与测试目标（3-5 个）, 1. 高德静态地图渲染, 目标：验证用户点击“目的地”后，系统能在 ≤2 s 内返回并正确渲染指定坐标/比例尺的静态地图，无偏移、无拉伸、无 404/403 错误。, 2. 商城入口天气&定位联动, 目标：确认点击“商城”后，搜索框周边实时天气卡片与定位图标同步出现，天气数据与定位城市一致，且定位精度 ≤100 m。"
+        ]
+      },
+      {
+        "title": "兼容性",
+        "checklist": [
+          "验证历史数据、旧版本客户端与不同区域配置的兼容。",
+          "关注多端（Web/App）交互一致性。"
+        ]
+      },
+      {
+        "title": "性能与韧性",
+        "checklist": [
+          "关键路径需在 30 秒内完成，异常有降级或重试。",
+          "覆盖限流、沙箱/预案演练，防止发布事故。"
+        ]
+      },
+      {
+        "title": "安全与风控",
+        "checklist": [
+          "验证权限、越权、数据注入与优惠/补贴防刷。",
+          "关注日志埋点、监控报警与回滚预案。"
+        ]
+      }
+    ],
+    "modules": [
+      {
+        "name": "功能模块与测试目标（3-5 个）",
+        "layout": "detailed",
+        "goal": "验证高德API与百度OCR通用物体和场景识别API在智能数据流程中的核心功能（静态地图、天气/定位、路径规划与交通态势、图像识别景点）是否可正常触发、返回及展示",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "高德-点击“目的地”成功获取静态地图",
+            "field_values": {
+              "preconditions": "1. 网络畅通；2. 已获取高德Web服务Key且配额充足；3. 页面已加载完成",
+              "steps": "1. 进入智能API首页；2. 点击“目的地”按钮；3. 在弹出输入框输入“北京故宫”并确认",
+              "expected": "1. 页面无报错；2. 3s内展示北京故宫静态地图（缩放比例12，尺寸750*400）；3. 地图右下角带高德logo",
+              "risk": "若高德配额耗尽，将返回空白图并记录errorCode=10003",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德-点击“商城”后搜索框周边展示天气与定位图标",
+            "field_values": {
+              "preconditions": "1. 浏览器已授权定位；2. 高德天气API可用",
+              "steps": "1. 点击“商城”；2. 等待搜索框渲染完成",
+              "expected": "1. 搜索框上方出现当前城市天气卡片（温度、天气图标、更新时间）；2. 搜索框右侧出现定位图标，点击可重新定位；3. 卡片数据与高德天气API返回值一致",
+              "risk": "定位失败时天气卡片仍展示默认城市，需提示“定位失败，已展示默认城市”",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德-点击“攻略”触发路径规划并展示交通态势",
+            "field_values": {
+              "preconditions": "1. 已缓存起点（当前位置）与终点（用户收藏景点）；2. 高德路径规划与交通态势API可用",
+              "steps": "1. 点击“攻略”；2. 选择“驾车”模式；3. 点击“开始规划”",
+              "expected": "1. 返回多条路线，默认推荐路线高亮；2. 路线叠加实时交通态势（红/黄/绿）；3. 预计通行时间>0；4. 下方POI列表展示沿途加油站、停车场",
+              "risk": "交通态势接口超时需降级为静态路线，并提示“实时路况更新失败”",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度OCR-点击搜索框相机图标进入相册选图并识别景点",
+            "field_values": {
+              "preconditions": "1. 设备相册含景点照片（≥1张）；2. 百度OCR通用物体和场景识别API配额充足；3. 已授予相册读取权限",
+              "steps": "1. 点击“目的地”搜索框右侧相机图标；2. 选择“从相册选择”；3. 点选一张“埃菲尔铁塔”照片；4. 等待识别",
+              "expected": "1. 3s内返回识别结果卡片，包含景点名称“埃菲尔铁塔”、置信度≥0.8、百度百科摘要；2. 卡片提供“查看地图”按钮，点击可跳转至高德静态地图并自动输入该景点",
+              "risk": "置信度<0.6时需提示“未识别到知名景点，请重新拍照”",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度OCR-拍照识别失败降级提示",
+            "field_values": {
+              "preconditions": "1. 相机可用；2. 百度OCR返回error_code=18（图片模糊）",
+              "steps": "1. 点击相机图标选择“拍照”；2. 故意拍摄一张模糊照片；3. 确认上传",
+              "expected": "1. 弹出Toast“图像模糊，识别失败，请重新拍摄”；2. 页面仍停留在相机界面，可重拍；3. 不产生任何景点信息缓存",
+              "risk": "连续3次模糊将锁定相机接口1分钟，需提示“操作频繁，请稍后再试”",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "1. 高德静态地图渲染",
+        "layout": "detailed",
+        "goal": "验证高德静态地图渲染功能在各种输入、网络及异常场景下均能正确生成并返回符合预期的静态图片",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "正常输入-标准经纬度与缩放",
+            "field_values": {
+              "preconditions": "网络畅通；高德静态地图服务可用；有效 key 已配置",
+              "steps": [
+                "构造请求 URL：center=116.397428,39.90923&zoom=15&size=600*400&key=有效 key",
+                "发起 GET 请求"
+              ],
+              "expected": "返回 200，Content-Type:image/jpeg 或 png；图片尺寸 600×400；中心点与缩放级别与参数一致",
+              "risk": "无",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "边界-最大缩放 18 级",
+            "field_values": {
+              "preconditions": "同上",
+              "steps": [
+                "center=116.397428,39.90923&zoom=18&size=600*400&key=有效 key"
+              ],
+              "expected": "返回 200，图片清晰无拉伸；无 414/500 错误",
+              "risk": "高缩放可能触发高德 QPS 限制",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "边界-最小缩放 3 级",
+            "field_values": {
+              "preconditions": "同上",
+              "steps": [
+                "center=116.397428,39.90923&zoom=3&size=600*400"
+              ],
+              "expected": "返回 200，全球视图可见；无空白图",
+              "risk": "无",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "异常-无效 key",
+            "field_values": {
+              "preconditions": "key 被禁用或拼写错误",
+              "steps": [
+                "使用 key=InvalidKey 请求静态地图"
+              ],
+              "expected": "返回 403，body 包含“KEY 无效”或错误码 10001",
+              "risk": "无",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "异常-经纬度越界",
+            "field_values": {
+              "preconditions": "同上",
+              "steps": [
+                "center=190,90&zoom=10"
+              ],
+              "expected": "返回 400，错误描述包含“经纬度越界”",
+              "risk": "无",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "异常-尺寸超限",
+            "field_values": {
+              "preconditions": "同上",
+              "steps": [
+                "size=1024*1024"
+              ],
+              "expected": "返回 400，提示“图片尺寸超出限制”",
+              "risk": "无",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "网络超时-弱网 5s 延迟",
+            "field_values": {
+              "preconditions": "使用网络模拟工具设置 5 s 延迟",
+              "steps": [
+                "触发静态地图请求"
+              ],
+              "expected": "客户端在 6 s 内收到超时异常；无半图或损坏图片",
+              "risk": "用户体验下降",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "并发-10 线程同时请求",
+            "field_values": {
+              "preconditions": "JMeter 脚本配置 10 并发",
+              "steps": [
+                "瞬间发起 10 个不同 center 请求"
+              ],
+              "expected": "全部返回 200；平均响应时间 <1 s；无 429 限流",
+              "risk": "触发高德 QPS 限速",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "参数组合-带 markers 与 labels",
+            "field_values": {
+              "preconditions": "同上",
+              "steps": [
+                "center=121.48,31.22&zoom=12&markers=mid,0xFF0000,A:121.48,31.22&labels=上海,121.48,31.22,2,14,0xFF0000"
+              ],
+              "expected": "返回图片中可见红色标记点 A 及“上海”文字标签；位置偏差 <10 px",
+              "risk": "无",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "缓存验证-二次请求命中 CDN",
+            "field_values": {
+              "preconditions": "首次请求已完成",
+              "steps": [
+                "重复相同 URL 请求"
+              ],
+              "expected": "Response Header 携带 X-Cache:HIT；响应时间 <首次 50%",
+              "risk": "缓存未及时刷新导致旧图",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "安全-HTTPS 证书校验",
+            "field_values": {
+              "preconditions": "系统仅允许 HTTPS 访问",
+              "steps": [
+                "通过 HTTPS 请求静态地图"
+              ],
+              "expected": "TLS 握手成功；证书链完整；无中间人警告",
+              "risk": "证书过期导致功能不可用",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "返回格式-WebP 支持探测",
+            "field_values": {
+              "preconditions": "客户端 Accept:image/webp",
+              "steps": [
+                "请求 header 携带 Accept:image/webp"
+              ],
+              "expected": "返回 Content-Type:image/webp；文件头包含 RIFF....WEBP",
+              "risk": "旧版浏览器不兼容 WebP",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "目标：验证用户点击“目的地”后，系统能在 ≤2 s 内返回并正确渲染指定坐标/比例尺的静态地图，无偏移、无拉伸、无 404/403 错误。",
+        "layout": "detailed",
+        "goal": "验证用户点击“目的地”后，系统能在 ≤2 s 内返回并正确渲染指定坐标/比例尺的静态地图，无偏移、无拉伸、无 404/403 错误。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "静态地图-首次点击-正常坐标-比例尺默认",
+            "field_values": {
+              "preconditions": "1. 网络正常；2. 已安装最新版 App；3. 首次冷启动；4. 已授权定位。",
+              "steps": "1. 进入首页；2. 点击底部导航“目的地”；3. 监听静态地图返回。",
+              "expected": "1. 返回耗时 ≤2 s（从点击到首帧渲染完成）；2. 地图中心与当前 GPS 坐标一致（误差 ≤10 m）；3. 比例尺为默认 16 级；4. 无 404/403；5. 无拉伸、无偏移；6. 控制台无 JS 报错。",
+              "risk": "若高德配额耗尽，会降级为空白图，需监控。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-首次点击-弱网 2G",
+            "field_values": {
+              "preconditions": "1. 使用网络模拟工具限速 56 kbps/300 ms 延迟；2. 其余同 TC01。",
+              "steps": "同 TC01。",
+              "expected": "1. 返回耗时 ≤2 s（含重试一次）；2. 最终展示地图中心与 GPS 一致；3. 无拉伸、无偏移；4. 若超时给出“网络超时”Toast，不展示错位图。",
+              "risk": "弱网下可能触发重试，需确认重试逻辑仅一次。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-指定城市-非当前定位",
+            "field_values": {
+              "preconditions": "1. 关闭定位权限；2. 在搜索框输入“北京天安门”并选中。",
+              "steps": "1. 点击“目的地”；2. 在搜索框输入“北京天安门”并点选第一条；3. 观察地图。",
+              "expected": "1. 地图中心经纬度为 116.3974,39.9093；2. 返回耗时 ≤2 s；3. 比例尺保持默认 16 级；4. 无偏移、无拉伸；5. 无 404/403。",
+              "risk": "POI 解析失败会 fallback 到城市中心，需校验。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-自定义比例尺-最大 19 级",
+            "field_values": {
+              "preconditions": "1. 进入目的地页；2. 双指放大至 19 级后点击“预览”。",
+              "steps": "1. 点击“目的地”；2. 手动放大到 19 级；3. 点击右上角“预览”重新拉取静态图。",
+              "expected": "1. 请求参数 zoom=19；2. 返回耗时 ≤2 s；3. 图片尺寸 800*600 无拉伸；4. 瓦片无 404；5. 道路名称清晰可读。",
+              "risk": "19 级瓦片可能不存在，需确认降级到 18 级并提示。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-自定义比例尺-最小 3 级",
+            "field_values": {
+              "preconditions": "1. 同上，缩小到 3 级。",
+              "steps": "1. 点击“目的地”；2. 缩小到 3 级；3. 点击“预览”。",
+              "expected": "1. 请求参数 zoom=3；2. 返回耗时 ≤2 s；3. 全球视图完整；4. 无拉伸、无偏移；5. 无 404/403。",
+              "risk": "3 级图尺寸大，需确认压缩后 ≤150 kB，防止 OOM。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-横屏切换-保持中心",
+            "field_values": {
+              "preconditions": "1. 手机开启自动旋转；2. 当前页为目的地。",
+              "steps": "1. 点击“目的地”获取地图；2. 等待渲染完成；3. 横屏；4. 观察地图。",
+              "expected": "1. 横屏后中心点不变；2. 比例尺不变；3. 图片重新加载耗时 ≤1 s（缓存命中）；4. 无拉伸、无黑边。",
+              "risk": "若未监听配置变更，中心会重置到 GPS，需校验。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-高德配额耗尽-403 降级",
+            "field_values": {
+              "preconditions": "1. 使用 Mock 拦截静态地图请求，返回 403；2. 开启降级开关。",
+              "steps": "1. 点击“目的地”。",
+              "expected": "1. 控制台出现 403；2. 2 s 内触发降级，展示本地缓存图（上次成功）；3. 出现“服务繁忙”Toast；4. 无崩溃、无白屏。",
+              "risk": "若降级图不存在，将白屏，需确保缓存。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-返回 404-瓦片缺失",
+            "field_values": {
+              "preconditions": "1. Mock 指定 zoom=20 返回 404；2. 允许自动降级。",
+              "steps": "1. 手动输入参数 zoom=20 并回车。",
+              "expected": "1. 收到 404；2. 自动降级到 zoom=19 重新请求；3. 总耗时仍 ≤2 s；4. 无用户感知拉伸。",
+              "risk": "连续 404 可能触发无限重试，需限制次数。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-并发点击-防抖验证",
+            "field_values": {
+              "preconditions": "1. 启用抓包；2. 网络正常。",
+              "steps": "1. 快速连续点击“目的地”5 次。",
+              "expected": "1. 仅发出 1 次静态地图请求；2. 返回耗时 ≤2 s；3. 其余点击被防抖忽略；4. 无重复叠加图。",
+              "risk": "防抖时间若过长，用户会误以为点击无效。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "静态地图-缓存命中-离线展示",
+            "field_values": {
+              "preconditions": "1. 首次成功加载地图；2. 开启飞行模式。",
+              "steps": "1. 杀进程；2. 重新进入 App；3. 点击“目的地”。",
+              "expected": "1. 2 s 内展示上次缓存图；2. 中心与比例尺一致；3. 出现“离线模式”提示；4. 无 404/403 请求。",
+              "risk": "缓存图过期策略若过长，可能展示旧数据，需校验 24 h 失效。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "2. 商城入口天气&定位联动",
+        "layout": "detailed",
+        "goal": null,
+        "fallback_content": "{\"module_goal\":\"在商城入口页实现“天气状况”与“定位”联动：首次进入自动定位并展示当地实时天气；用户手动切换城市后，天气同步刷新；定位失败或天气接口异常时给出容错提示，保证核心区块不空白。\",\"cases\":[{\"title\":\"首次进入商城-定位权限已授予-自动获取当前城市并展示对应天气\",\"preconditions\":\"1. 安装并首次启动App；2. 系统定位权限已开启；3. 网络畅通；4. 高德定位与天气接口Mock正常。\",\"steps\":[\"1. 启动App；2. 在首页点击底部Tab「商城」。\"],\"expected\":\"1. 页面顶部搜索框左侧定位城市显示为“北京”（Mock返回北京）；2. 搜索框下方天气卡片展示“26°C 晴”；3. 不弹出权限申请弹窗；4. 接口耗时<800ms，无闪烁。\"],\"risk\":\"若Mock未配置，将调用真实高德接口，可能产生流量费用。\",\"priority\":\"P0\"},{\"title\":\"定位权限拒绝后首次进入商城-应引导用户手动选择城市并兜底展示默认天气\",\"preconditions\":\"1. 清除App数据；2. 系统定位权限关闭；3. 网络正常。\",\"steps\":[\"1. 启动App；2. 点击「商城」；3. 系统弹定位权限申请，点击拒绝；4. 观察页面。\"],\"expected\":\"1. 定位城市显示“点击选择”；2. 天气卡片展示“22°C 多云”（服务端默认城市天气）；3. 出现Toast“定位失败，已为您展示默认城市天气”；4. 点击“点击选择”可进入城市选择器。\"],\"risk\":\"无\",\"priority\":\"P0\"},{\"title\":\"用户手动切换城市-天气联动刷新成功\",\"preconditions\":\"1. 已在商城页且定位北京；2. 网络正常。\",\"steps\":[\"1. 点击定位城市“北京”；2. 在城市列表搜索并选择“上海”；3. 返回商城页。\"],\"expected\":\"1. 定位城市变为“上海”；2. 天气卡片刷新为“28°C 小雨”；3. 刷新旋转动画≤1s；4. 接口返回200。\"],\"risk\":\"无\",\"priority\":\"P0\"},{\"title\":\"天气接口返回500-应展示缓存天气并给出错误提示\",\"preconditions\":\"1. 已在商城页；2. 高德天气Mock置为500；3. 本地存在30min内缓存。\",\"steps\":[\"1. 下拉刷新页面；2. 观察天气卡片。\"],\"expected\":\"1. 仍显示缓存温度与图标；2. 出现Toast“天气更新失败，请稍后再试”；3. 定位城市不变；4. 控制台打印错误日志。\"],\"risk\":\"无\",\"priority\":\"P1\"},{\"title\":\"定位城市返回为空-应兜底使用IP定位并展示对应天气\",\"preconditions\":\"1. 清除缓存；2. 高德定位Mock返回city=“”；3. IP定位Mock返回深圳；4. 网络正常。\",\"steps\":[\"1. 重启App；2. 进入商城页。\"],\"expected\":\"1. 定位城市显示“深圳”；2. 天气卡片展示深圳实时天气；3. 无崩溃或空白。\"],\"risk\":\"IP定位精度低，可能展示错误城市。\",\"priority\":\"P1\"},{\"title\":\"网络断开时进入商城-应展示上次缓存天气并提示网络异常\",\"preconditions\":\"1. 杀死App；2. 关闭Wi-Fi与移动数据；3. 上次缓存为“广州 30°C 雷阵雨”。\",\"steps\":[\"1. 启动App；2. 点击「商城」。\"],\"expected\":\"1. 定位城市显示“广州”；2. 天气卡片展示“30°C 雷阵雨”；3. 出现SnackBar“网络连接失败，已显示缓存数据”；4. 点击重试按钮可重新请求。\"],\"risk\":\"无\",\"priority\":\"P1\"},{\"title\":\"定位权限从拒绝变为允许-应自动刷新定位与天气\",\"preconditions\":\"1. 当前定位权限拒绝；2. 商城页展示默认城市；3. 网络正常。\",\"steps\":[\"1. 上滑控制中心开启定位权限；2. 返回App；3. 在商城页下拉刷新。\"],\"expected\":\"1. 定位城市自动变为真实当前城市；2. 天气同步刷新；3. 无手动选择城市弹窗。\"],\"risk\":\"无\",\"priority\":\"P2\"},{\"title\":\"后台切换定位城市后返回前台-应记忆用户选择不自动改回\",\"preconditions\":\"1. 用户手动选择“成都”；2. 退至后台；3. 移动手机到另一城市；4. 网络正常。\",\"steps\":[\"1. 重新打开App进入商城。\"],\"expected\":\"1. 定位城市仍为“成都”；2. 天气为成都实时数据；3. 不因真实位置变化而自动切换。\"],\"risk\":\"无\",\"priority\":\"P2\"},{\"title\":\"快速连续切换城市-应防抖仅触发最后一次请求\",\"preconditions\":\"1. 网络正常；2. 打开Charles抓包。\",\"steps\":[\"1. 点击城市选择器；2. 在1s内快速点击“杭州”→“南京”→“苏州”；3. 观察抓包。\"],\"expected\":\"1. 仅发出1次苏州天气请求；2. 最终显示“苏州”天气；3. 无多次Loading叠加。\"],\"risk\":\"无\",\"priority\":\"P2\"},{\"title\":\"缓存超过2小时-再次进入应自动更新天气\",\"preconditions\":\"1. 修改本地缓存时间至2小时1分钟前；2. 网络正常。\",\"steps\":[\"1. 杀死App；2. 重新进入商城。\"],\"expected\":\"1. 自动发起天气请求；2. 缓存时间更新为当前；3. 温度/图标可能变化。\"],\"risk\":\"无\",\"priority\":\"P3\"}]}",
+        "cases": []
+      },
+      {
+        "name": "目标：确认点击“商城”后，搜索框周边实时天气卡片与定位图标同步出现，天气数据与定位城市一致，且定位精度 ≤100 m。",
+        "layout": "detailed",
+        "goal": "确认点击“商城”后，搜索框周边实时天气卡片与定位图标同步出现，天气数据与定位城市一致，且定位精度 ≤100 m。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "商城入口点击后天气卡片与定位图标同步渲染",
+            "field_values": {
+              "preconditions": "1. 已安装最新版 App；2. 首次启动已授权定位权限；3. 网络畅通；4. 未开启飞行模式。",
+              "steps": "1. 启动 App；2. 在首页底部导航栏点击“商城”。",
+              "expected": "1. 页面跳转至商城首页；2. 搜索框上方或右侧 0.5 s 内同时出现天气卡片与定位图标；3. 无loading 状态错位或闪烁。",
+              "risk": "若图标加载延迟，用户可能误以为定位失败而重复点击。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "天气卡片城市名称与定位返回城市完全一致",
+            "field_values": {
+              "preconditions": "1. 定位权限已授权；2. 高德 API 正常；3. 手机系统语言为简体中文。",
+              "steps": "1. 点击“商城”；2. 记录天气卡片显示的城市名称；3. 通过系统设置→位置信息→最近定位，查看经纬度对应的城市。",
+              "expected": "天气卡片城市与系统定位城市名称完全一致（不含“市”字也视为一致）。",
+              "risk": "若城市别名库不全，可能出现“广州”vs“广州市”不一致。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "定位精度 ≤100 m 验证（室外 GPS 场景）",
+            "field_values": {
+              "preconditions": "1. 在空旷室外，GPS 信号≥4 颗星；2. 关闭 Wi-Fi 与蓝牙扫描辅助。",
+              "steps": "1. 打开系统 GPS 测试工具记录当前精度值；2. 返回 App 点击“商城”；3. 通过 Charles 抓取高德定位 API 返回的 accuracy 字段。",
+              "expected": "accuracy ≤100 m。",
+              "risk": "室内或高楼林立环境可能导致精度>100 m，需单独用例覆盖。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "定位精度 ≤100 m 验证（Wi-Fi 辅助场景）",
+            "field_values": {
+              "preconditions": "1. 关闭 GPS；2. 仅开启 Wi-Fi 并连接已知热点；3. 高德 Wi-Fi 定位库已更新。",
+              "steps": "1. 点击“商城”；2. 抓包获取定位 accuracy。",
+              "expected": "accuracy ≤100 m。",
+              "risk": "若 Wi-Fi 库缺失热点，会降级到基站定位，精度可能>100 m。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "无定位权限时点击商城提示引导授权",
+            "field_values": {
+              "preconditions": "1. 系统权限中关闭定位；2. 清除 App 缓存。",
+              "steps": "1. 启动 App；2. 点击“商城”。",
+              "expected": "1. 天气卡片区域显示“需要定位权限”文案+去设置按钮；2. 不崩溃；3. 点击按钮跳转系统权限设置页。",
+              "risk": "若未拦截，天气卡片可能空白，影响体验。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德定位 API 返回超时异常处理",
+            "field_values": {
+              "preconditions": "1. 通过 Charles 把定位 API 设为 5 s 延迟并返回 408；2. 保持网络畅通。",
+              "steps": "1. 点击“商城”。",
+              "expected": "1. 1 s 内出现“定位超时，请重试”toast；2. 天气卡片保持上一次缓存或显示“--”；3. 可点击定位图标手动刷新。",
+              "risk": "若未处理超时，用户长期看不到天气。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "天气 API 返回空数据异常处理",
+            "field_values": {
+              "preconditions": "1. Mock 高德天气 API 返回空 JSON；2. 定位成功。",
+              "steps": "1. 点击“商城”。",
+              "expected": "天气卡片显示“暂无天气数据”占位图，不显示旧缓存。",
+              "risk": "若展示缓存，可能误导用户。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "弱网（2G）下天气卡片 3 s 内出现降级文案",
+            "field_values": {
+              "preconditions": "1. 使用 Charles 限速 56 kbps；2. 定位成功。",
+              "steps": "1. 点击“商城”。",
+              "expected": "3 s 内出现“网络较慢，天气数据更新中”骨架屏，随后展示缓存天气，城市名仍与定位一致。",
+              "risk": "若无限速策略，用户可能重复点击刷新。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "切换城市后再次点击商城保持最新定位城市天气",
+            "field_values": {
+              "preconditions": "1. 在“目的地”页手动搜索并切换到“上海”；2. 返回首页。",
+              "steps": "1. 点击“商城”。",
+              "expected": "天气卡片自动刷新为当前定位城市（非“上海”），确保与定位一致。",
+              "risk": "若缓存未清除，可能仍显示“上海”天气。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "暗黑模式下天气卡片 UI 可见性",
+            "field_values": {
+              "preconditions": "1. 系统开启暗黑模式；2. 定位成功。",
+              "steps": "1. 点击“商城”。",
+              "expected": "天气卡片文字、图标对比度≥4.5:1，无黑色文字 on 黑色背景。",
+              "risk": "视觉不可读导致用户投诉。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "3. 攻略多服务聚合（POI/路径/交通态势）",
+        "layout": "detailed",
+        "goal": "在「攻略」场景下，把高德路径规划、POI 搜索、静态地图、天气、输入提示、交通态势 6 类服务聚合成一次可编排调用，并保证异常降级与 SLA。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "聚合-001-正常输入触发6服务全链路成功",
+            "field_values": {
+              "preconditions": "1. 高德6类接口账号配额充足；2. 服务注册中心已挂载6个服务；3. 用户已授权定位权限。",
+              "steps": "1. 进入「攻略」页；2. 在搜索框输入“北京故宫”；3. 点击“智能规划”按钮。",
+              "expected": "1. 页面2s内展示静态地图底图；2. 下方卡片依次出现：①Top5 POI ②3条路径（驾车/公交/步行）③实时交通态势简图 ④当前天气 ⑤输入联想词关闭；3. 各服务HTTP 200且response<500ms。",
+              "risk": "若任一服务超时，用户将看到缺省占位图，体验下降。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-002-POI服务超时降级",
+            "field_values": {
+              "preconditions": "1. 配置POI超时阈值=800ms；2.  mock POI接口延迟1s。",
+              "steps": "同聚合-001",
+              "expected": "1. 静态地图、路径、天气正常返回；2. POI区域显示“附近景点加载失败，点击重试”；3. 其余服务无连锁超时。",
+              "risk": "降级提示文案需国际化，否则海外用户无法识别。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-003-路径规划服务返回空数组",
+            "field_values": {
+              "preconditions": "1. 起点=“三沙市政府”(南海岛屿)；2. 终点=“北京故宫”。",
+              "steps": "输入起终点后点击“智能规划”",
+              "expected": "1. 路径Tab显示“暂无可行路线”；2. 其余5服务正常展示；3. 不触发Crash。",
+              "risk": "如未做空数组保护，客户端数组越界会崩溃。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-004-交通态势限流返回429",
+            "field_values": {
+              "preconditions": "1. 高德交通态势QPS=1；2. 连续刷新2次。",
+              "steps": "快速点击“刷新交通”两次",
+              "expected": "第二次调用收到429，客户端弹Toast“查询太频繁，稍后再试”，且不再重试。",
+              "risk": "未做频率限制将导致IP被封，影响全量用户。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-005-天气服务返回异常城市码",
+            "field_values": {
+              "preconditions": "1. 高德天气接口入参citycode=999999（非法）。",
+              "steps": "在定位失败场景下手动输入“火星”并搜索",
+              "expected": "天气卡片显示“--”并记录错误日志，不阻断主流程。",
+              "risk": "若把异常抛到UI层，将触发全局ErrorBoundary。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-006-输入提示服务关键字长度边界",
+            "field_values": {
+              "preconditions": "1. 输入提示要求1≤len≤30；2. 已关闭拼音联想。",
+              "steps": "1. 输入“a”；2. 输入31个字符的字符串。",
+              "expected": "1. 输入=“a”时立即发起联想并返回10条；2. 输入>30字符时前端禁止继续输入，不发起请求。",
+              "risk": "后端未校验长度可能导致慢查询。",
+              "priority": "P3"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-007-并发请求顺序一致性",
+            "field_values": {
+              "preconditions": "1. 6服务并行调用；2. 网络抖动导致响应乱序。",
+              "steps": "正常搜索“上海迪士尼”",
+              "expected": "UI层按静态地图→POI→路径→交通→天气→输入提示顺序渲染，不出现先显示路径后底图空白。",
+              "risk": "顺序错乱的闪屏会被用户截图投诉。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-008-返回数据缓存复用",
+            "field_values": {
+              "preconditions": "1. 开启5分钟内存缓存；2. 同一关键词“杭州西湖”再次搜索。",
+              "steps": "1. 首次搜索；2. 退出页面；3. 10分钟内再次进入并搜索相同关键词。",
+              "expected": "第二次搜索无网络请求，数据秒出，且时间戳显示“缓存”。",
+              "risk": "缓存未加版本号可能导致旧数据长期滞留。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-009-网络断开弱网重试",
+            "field_values": {
+              "preconditions": "1. 开启飞行模式；2. 配置重试2次，间隔500ms。",
+              "steps": "点击“智能规划”",
+              "expected": "1. 弹窗提示“网络不可用”；2. 日志记录2次重试均失败；3. 关闭飞行模式后点击“重试”立即成功。",
+              "risk": "重试次数过多将加剧用户流量消耗。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "聚合-010-多服务返回字段缺失兼容",
+            "field_values": {
+              "preconditions": "1. 高德路径接口去掉“duration”字段；2. 服务端未通知前端。",
+              "steps": "搜索任意可规划路线",
+              "expected": "1. 路径卡片仍展示距离与方案名；2. 缺失的duration展示“-- min”；3. 不触发JS报错。",
+              "risk": "字段缺失如未兼容将白屏。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "目标：一次性调用后，接口返回的 POI 列表、路径规划、交通态势、天气、输入提示 5 类数据字段完整、无空值，且各子接口总耗时 ≤3 s。",
+        "layout": "detailed",
+        "goal": "一次性调用后，接口返回的 POI 列表、路径规划、交通态势、天气、输入提示 5 类数据字段完整、无空值，且各子接口总耗时 ≤3 s。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "正向-核心5类字段全量返回且耗时≤3s",
+            "field_values": {
+              "preconditions": "1. 高德 WebAPI 密钥有效；2. 百度 OCR 密钥有效；3. 服务端并发≤50 QPS；4. 测试账号已登录并定位到北京",
+              "steps": "1. 构造一次性聚合请求：/smartapi/v1/all?origin=116.481,39.990&destination=116.397,39.909&city=beijing&strategy=10&extensions=all&image=base64(商场照片)；2. 记录 T0=请求发出时间；3. 收到 200 响应后记录 T1",
+              "expected": "1. JSON 根节点包含 poiList、route、traffic、weather、inputTips 五个一级 key；2. 五个 key 下所有叶子节点 value 均不为 null、''、[]、{}；3. cost 字段≤3000 ms；4. T1-T0≤3 s",
+              "risk": "聚合接口内部串行调用，任一子接口超时会导致整体失败",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "POI 列表字段完整性校验",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. 仅关注 poiList 节点；2. 遍历每条条目的 name、location、address、distance、typeCode、parking、tel",
+              "expected": "6 个字段全部非空且符合对应类型格式",
+              "risk": "高德 POI 库存在少量缺失 tel 的冷门地点",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "路径规划字段完整性校验",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. 仅关注 route.paths[0]；2. 检查 distance、duration、taxi_cost、steps[0].instruction、steps[0].road",
+              "expected": "5 个字段全部非空，distance>0，duration>0",
+              "risk": "夜间出租费用可能返回 0",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "交通态势字段完整性校验",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. 仅关注 traffic.evaluation.expedite、congested、blocked、unknown、status",
+              "expected": "5 个字段全部存在且为整数，status∈[0,3]",
+              "risk": "新开通道路无历史路况返回 unknown=-1",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "天气字段完整性校验",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. 仅关注 weather.lives[0]；2. 检查 province、city、temperature、weather、winddirection、reporttime",
+              "expected": "6 个字段全部非空，temperature 为数字字符串",
+              "risk": "高原站点 windpower 可能为空，不影响本用例",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "输入提示字段完整性校验",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. 仅关注 inputTips；2. 检查每条提示的 name、district、location",
+              "expected": "3 个字段全部非空",
+              "risk": "提示词为拼音时 district 可能为空",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "耗时边界-3s整点通过",
+            "field_values": {
+              "preconditions": "1. 在预发布环境注入 2.9 s 的 mock 延迟；2. 其余同正向用例",
+              "steps": "1. 发起聚合请求；2. 校验返回头 X-Backend-Cost=2900 ms",
+              "expected": "返回 200，全部字段非空",
+              "risk": "网络抖动可能导致实际耗时>3 s 误判",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "耗时越界-3s+1ms失败",
+            "field_values": {
+              "preconditions": "1. 在预发布环境注入 3001 ms 的 mock 延迟；2. 其余同正向用例",
+              "steps": "1. 发起聚合请求",
+              "expected": "返回 408 Request Timeout，errorCode=‘AGG_TIMEOUT’",
+              "risk": "压测时可能误伤线上",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德POI子接口异常-降级空数组",
+            "field_values": {
+              "preconditions": "1. 将 /v3/place/text 返回 502；2. 其余子接口正常",
+              "steps": "1. 发起聚合请求",
+              "expected": "poiList=[]，其余4类字段正常非空，总耗时仍≤3 s",
+              "risk": "客户端需兼容空数组场景",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "路径规划子接口异常-降级空对象",
+            "field_values": {
+              "preconditions": "1. 将 /v4/direction/driving 返回 403；2. 其余子接口正常",
+              "steps": "1. 发起聚合请求",
+              "expected": "route={}，其余4类字段正常非空，总耗时仍≤3 s",
+              "risk": "前端需判断 route 为空时隐藏导航按钮",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "交通态势子接口异常-降级空对象",
+            "field_values": {
+              "preconditions": "1. 将 /v3/traffic/status/rectangle 返回 400；2. 其余子接口正常",
+              "steps": "1. 发起聚合请求",
+              "expected": "traffic={}，其余4类字段正常非空，总耗时仍≤3 s",
+              "risk": "无",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "天气子接口异常-降级空对象",
+            "field_values": {
+              "preconditions": "1. 将 /v3/weather/weatherInfo 返回 404；2. 其余子接口正常",
+              "steps": "1. 发起聚合请求",
+              "expected": "weather={}，其余4类字段正常非空，总耗时仍≤3 s",
+              "risk": "无",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "输入提示子接口异常-降级空数组",
+            "field_values": {
+              "preconditions": "1. 将 /v3/assistant/inputtips 返回 500；2. 其余子接口正常",
+              "steps": "1. 发起聚合请求",
+              "expected": "inputTips=[]，其余4类字段正常非空，总耗时仍≤3 s",
+              "risk": "无",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度OCR异常-仅图像结果为空",
+            "field_values": {
+              "preconditions": "1. 将 /rest/2.0/image-classify/v2/advanced_general 返回 429；2. 其余子接口正常",
+              "steps": "1. 发起带 image 参数的聚合请求",
+              "expected": "imagePoi=null，其余5类字段正常非空，总耗时仍≤3 s",
+              "risk": "无",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "参数缺失-origin为空",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. 请求中省略 origin 参数",
+              "expected": "返回 400，errorCode=‘PARAM_MISSING’，message 包含 origin",
+              "risk": "无",
+              "priority": "P3"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "参数非法-latitude>90",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. origin=‘116,91’",
+              "expected": "返回 400，errorCode=‘PARAM_INVALID’",
+              "risk": "无",
+              "priority": "P3"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "城市编码不存在",
+            "field_values": {
+              "preconditions": "同正向用例",
+              "steps": "1. city=‘mars’",
+              "expected": "返回 200，poiList=[]，route={}，其余字段非空",
+              "risk": "无",
+              "priority": "P3"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "并发50 QPS压测-耗时仍≤3s",
+            "field_values": {
+              "preconditions": "1. JMeter 线程组 50，Ramp-up 1 s，持续 30 s",
+              "steps": "1. 持续发起聚合请求；2. 收集 90th 耗时",
+              "expected": "90th 耗时≤3000 ms，错误率=0%，所有成功返回的响应字段非空",
+              "risk": "压测可能触发高德流控",
+              "priority": "P1"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "4. 百度 OCR 图像识别链路",
+        "layout": "detailed",
+        "goal": "通过百度 OCR 通用物体与场景识别 API，将用户上传/拍摄的图片转化为可定位的景点信息，并保证整条链路在高并发、弱网、异常图片等场景下的可用性与数据准确性。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "【正向】标准景点照片识别成功并返回结构化景点信息",
+            "field_values": {
+              "preconditions": "1. 百度 OCR 服务正常；2. 测试账号配额充足；3. 手机相册已预置 5 张 800×600 清晰景点照片（含故宫、长城、外滩、西湖、泰山）。",
+              "steps": "1. 进入 App 首页；2. 点击“目的地”搜索框右侧相机图标；3. 选择“从相册选择”；4. 选中“故宫”照片；5. 点击“确定”上传。",
+              "expected": "1. 请求返回 HTTP 200；2. JSON 内 location.name=“故宫” 且 confidence≥0.85；3. 页 面 1s 内跳转到故宫 POI 详情页，经纬度误差≤50m。",
+              "risk": "无",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【正向】拍照后立即识别并缓存结果，二次进入不再调用 API",
+            "field_values": {
+              "preconditions": "1. 首次拍照已完成识别且缓存 30min；2. 网络正常。",
+              "steps": "1. 点击相机图标→拍照“长城”；2. 识别完成返回结果后退出页面；3. 10min 后再次点击相机图标→选择“最近项目”中同一张图。",
+              "expected": "1. 二次选择后无网络请求（抓包验证）；2. 结果瞬时呈现≤200ms。",
+              "risk": "缓存击穿导致重复计费",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【异常】上传非景点图片（例如白屏/纯色）触发“未识别”提示",
+            "field_values": {
+              "preconditions": "1. 相册已存 1 张 1920×1080 纯白 PNG。",
+              "steps": "1. 点击相机图标→选择白屏图片→上传。",
+              "expected": "1. 返回 JSON 中 error_code=216102（未识别到场景）；2. 页面弹出 Toast“未识别到景点，请更换图片”；3. 不产生计费记录。",
+              "risk": "无",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【异常】图片大小超限 4MB 触发前端拦截",
+            "field_values": {
+              "preconditions": "1. 相册已存 1 张 5.2MB 的 4096×2730 原图。",
+              "steps": "1. 点击相机图标→选择该大图→点击“确定”。",
+              "expected": "1. 前端弹窗提示“图片大小不可超过 4MB”；2. 网络层未发出请求；3. 用户可重新选择。",
+              "risk": "无",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【异常】百度 OCR 配额耗尽返回 17 错误码，App 降级提示",
+            "field_values": {
+              "preconditions": "1. 通过 Mock 把百度返回固定为 error_code=17（日配额耗尽）。",
+              "steps": "1. 点击相机图标→任选照片→上传。",
+              "expected": "1. 返回 200 但 JSON 内 error_code=17；2. 页面弹窗“今日识别次数用完，明日再来”；3. 写错误日志：errorType=QPS_EXCEED。",
+              "risk": "高峰期用户投诉",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【网络】弱网（200kbps/500ms 延迟）上传重试 2 次后成功",
+            "field_values": {
+              "preconditions": "1. 使用 Charles 限速 200kbps、延迟 500ms、丢包 10%；2. 图片 500KB。",
+              "steps": "1. 点击相机图标→拍照→上传；2. 观察抓包。",
+              "expected": "1. 前两次请求因超时触发重试；2. 第三次成功返回景点信息；3. 总耗时≤15s；4. 页面保持转圈提示，不崩溃。",
+              "risk": "重试风暴放大服务端压力",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【并发】10 线程并发调用，QPS=20 时成功率≥99.5%",
+            "field_values": {
+              "preconditions": "1. 使用 JMeter 构造 10 线程、每线程 20 次请求；2. 图片 300KB。",
+              "steps": "1. 批量 POST /ocr/scene；2. 收集返回码与响应时间。",
+              "expected": "1. 成功率≥99.5%；2. 95th 响应时间≤1.2s；3. 服务端 CPU≤70%。",
+              "risk": "触发百度限流导致密钥被封",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【安全】上传含恶意 EXIF GPS 坐标的图片，坐标被清洗",
+            "field_values": {
+              "preconditions": "1. 图片 EXIF 中写入 GPS 坐标（116.397,39.909）；2. 后端配置“清洗 EXIF”。",
+              "steps": "1. 上传该图；2. 检查日志与返回。",
+              "expected": "1. 返回景点信息不以 EXIF 坐标为准；2. 日志中 GPS 字段为 null；3. 服务端未保存原图。",
+              "risk": "用户隐私泄露",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【兼容性】HEIC 格式自动转 JPEG 后识别",
+            "field_values": {
+              "preconditions": "1. iPhone 12 拍摄 HEIC 照片 1 张；2. 前端集成 HEIC 转码库。",
+              "steps": "1. 点击相机图标→选择该 HEIC→上传。",
+              "expected": "1. 前端先转码为 JPEG＜2MB；2. 识别成功返回正确景点；3. 转码耗时≤600ms。",
+              "risk": "转码 OOM 导致 App 闪退",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "【回退】百度 OCR 返回空 JSON，App 触发本地识图兜底（TensorFlow Lite）",
+            "field_values": {
+              "preconditions": "1. Mock 百度返回 200+空 data；2. 本地模型已内置 Top1000 景点。",
+              "steps": "1. 上传“西湖”照片。",
+              "expected": "1. 控制台打印“fallback to local model”；2. 返回景点“西湖”置信度≥0.75；3. 记录兜底指标 fallback=1。",
+              "risk": "本地模型体积大增加包体积",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "目标：从“图片标识”→相册/拍照→上传→识别→返回景点信息，端到端 ≤5 s；识别准确率 ≥90%（Top1 景点名称匹配），支持 JPG/PNG ≤5 MB。",
+        "layout": "detailed",
+        "goal": "从“图片标识”→相册/拍照→上传→识别→返回景点信息，端到端 ≤5 s；识别准确率 ≥90%（Top1 景点名称匹配），支持 JPG/PNG ≤5 MB。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "正向-相册选择≤5 MB JPG，识别Top1正确且≤5 s",
+            "field_values": {
+              "preconditions": "1. 网络正常；2. 相册已存1张≤5 MB的JPG，内容为“天安门”；3. 百度OCR已配置天安门样本；4. 服务端已缓存天安门POI信息。",
+              "steps": "1. 点击“目的地”搜索框右侧图片标识；2. 选择“从相册选择”；3. 选中“天安门.jpg”；4. 点击“确定”上传。",
+              "expected": "1. 上传进度条≤1 s消失；2. 识别结果页在5 s内弹出；3. Top1景点名称=“天安门”；4. 下方展示高德POI详情（地址、评分）。",
+              "risk": "若CDN回源慢，可能超时>5 s。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "正向-拍照≤5 MB PNG，识别Top1正确且≤5 s",
+            "field_values": {
+              "preconditions": "1. 相机权限已授权；2. 环境光线充足；3. 镜头正对“鸟巢”。",
+              "steps": "1. 点击“图片标识”；2. 选择“拍照”；3. 按下快门；4. 点击“使用照片”。",
+              "expected": "1. 拍照压缩后PNG≤5 MB；2. 识别结果5 s内返回Top1=“国家体育场（鸟巢）”。",
+              "risk": "弱网环境下可能压缩耗时增加。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "负向-上传8 MB JPG，触发大小拦截",
+            "field_values": {
+              "preconditions": "相册存在8 MB JPG。",
+              "steps": "选中该图片并确认上传。",
+              "expected": "1. 前端立即Toast提示“图片大小不能超过5 MB”；2. 未产生上传流量。",
+              "risk": "无。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "负向-上传5.1 MB PNG，边界校验",
+            "field_values": {
+              "preconditions": "相册存在5.1 MB PNG。",
+              "steps": "选中该图片并确认。",
+              "expected": "同上，被拦截。",
+              "risk": "无。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "负向-图片无景点，返回“未识别”",
+            "field_values": {
+              "preconditions": "相册存一张纯白纸JPG（≤2 MB）。",
+              "steps": "上传该图片。",
+              "expected": "1. 5 s内返回提示“未识别到景点，请更换图片”；2. 不展示任何POI卡片。",
+              "risk": "无。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "负向-网络超时，上传阶段断开",
+            "field_values": {
+              "preconditions": "开启飞行模式。",
+              "steps": "点击拍照并确认上传。",
+              "expected": "1. 3 s内弹出“网络连接失败，请检查网络”Toast；2. 可重试按钮可用。",
+              "risk": "无。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "性能-并发10次请求，95分位≤5 s",
+            "field_values": {
+              "preconditions": "压测脚本准备10张≤5 MB JPG，内容均为已缓存景点。",
+              "steps": "脚本并发10线程上传。",
+              "expected": "1. 95分位响应时间≤5 s；2. 错误率=0%；3. Top1准确率≥90%。",
+              "risk": "压测可能触发流控。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "兼容性-Android 10 & iOS 16相册调用",
+            "field_values": {
+              "preconditions": "1. 设备1：Android 10；2. 设备2：iOS 16；3. 相册各存1张≤5 MB JPG。",
+              "steps": "在两台设备分别完成“相册选择→上传→识别”。",
+              "expected": "1. 两端均5 s内返回正确景点；2. 无崩溃无权限弹窗阻塞。",
+              "risk": "iOS首次可能触发“选取照片”权限级别选择。",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "准确率-100张不同景点盲测，Top1≥90%",
+            "field_values": {
+              "preconditions": "实验室准备100张已标注景点图片（JPG/PNG各50，大小≤5 MB）。",
+              "steps": "批量上传并记录Top1结果。",
+              "expected": "1. Top1命中数≥90；2. 平均响应≤5 s。",
+              "risk": "无。",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "边界-拍照后旋转90°，仍识别正确",
+            "field_values": {
+              "preconditions": "相机拍照自动旋转。",
+              "steps": "横屏拍“东方明珠”，上传。",
+              "expected": "识别结果Top1=“东方明珠”。",
+              "risk": "EXIF旋转信息被误删导致识别失败。",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "5. 异常与降级策略",
+        "layout": "detailed",
+        "goal": "验证高德API与百度OCR在异常场景下的降级、熔断、重试、缓存兜底及用户无感知策略是否生效",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "高德静态地图服务5xx持续3次触发熔断降级",
+            "field_values": {
+              "preconditions": "1. 高德静态地图接口Mock地址已配置熔断阈值：连续失败3次/30s；2. 本地缓存目录/data/map_cache已预置北京天安门默认静态图；3. 网络代理可返回503",
+              "steps": "1. 代理层连续3次返回503；2. 用户点击“目的地”；3. 观察第4次请求",
+              "expected": "1. 第4次请求不再发向高德，直接返回本地缓存图；2. UI顶部出现“当前为离线地图，网络恢复后自动更新”Toast；3. 熔断事件写入/logs/fuse_amap.log",
+              "risk": "若缓存图缺失，用户看到空白图，体验降级为P0事故",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度OCR图像识别QPS超限触发429降级",
+            "field_values": {
+              "preconditions": "1. 百度OCR接口Mock QPS=1；2. 降级策略：429时走本地景点白名单缓存（json文件）；3. 白名单含“长城”关键词及默认介绍",
+              "steps": "1. 用脚本1s内并发上传5张长城照片；2. 观察第2~5次识别结果",
+              "expected": "1. 第1次正常调百度并返回真实结果；2. 第2~5次直接命中白名单缓存，返回“长城”默认介绍；3. 监控指标/counter/ocr_fallback增加4",
+              "risk": "白名单数据陈旧导致用户得到错误景点信息",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德路径规划接口超时2s触发重试+缓存兜底",
+            "field_values": {
+              "preconditions": "1. 路径规划超时阈值=2s；2. 重试次数=1；3. 本地SQLite缓存表route_cache已存“北京→上海”的1条历史路线",
+              "steps": "1. 代理层延迟2.5s后返回；2. 用户点击“攻略”并输入起终点“北京→上海”；3. 观察网络层请求次数与UI",
+              "expected": "1. 共发出2次请求，均超时；2. 第2次超时后读取SQLite缓存路线并渲染；3. 地图右上角出现“离线路线，仅供参考”标签",
+              "risk": "缓存路线含施工封闭路段，导航错误",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度OCR识别返回空结果触发兜底提示",
+            "field_values": {
+              "preconditions": "1. 百度OCR返回空JSON；2. 产品策略：空结果时提示“未识别到景点，请手动输入”",
+              "steps": "1. 上传一张纯色图片；2. 点击“确定”",
+              "expected": "1. 不弹出景点卡片；2. 搜索框下方红色提示“未识别到景点，请手动输入”；3. 不触发任何高德后续查询，节省配额",
+              "risk": "无",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德天气接口域名DNS不可降级到备用域名",
+            "field_values": {
+              "preconditions": "1. 主域名restapi.amap.com已配置Hosts到非法IP；2. 降级域名restapi-backup.amap.com正常；3. 超时阈值1.5s",
+              "steps": "1. 用户点击“商城”；2. 观察网络请求域名",
+              "expected": "1. 主域名请求1.5s超时；2. 自动重试备用域名并成功返回天气数据；3. 监控指标/dns_failover_amap增加1",
+              "risk": "备用域名也故障则天气模块空白",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "用户连续10次触发熔断后自动恢复探测",
+            "field_values": {
+              "preconditions": "1. 熔断器滑动窗口10s；2. 恢复探测间隔=5s；3. 探测成功阈值=1",
+              "steps": "1. 连续10次静态地图503；2. 等待5s；3. 再次点击“目的地”",
+              "expected": "1. 第11次请求发向高德并返回200；2. 熔断器状态由Open→Half-Open→Closed；3. /logs/fuse_amap.log记录“recovered”",
+              "risk": "恢复探测期间若仍失败，熔断器重新Open，用户继续看到缓存图",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "本地缓存图损坏触发MD5校验并拉取默认图",
+            "field_values": {
+              "preconditions": "1. 缓存图/data/map_cache/beijing.jpg被篡改，MD5不匹配；2. 默认图/assets/default_map.jpg存在",
+              "steps": "1. 用户点击“目的地”；2. 系统优先校验缓存MD5",
+              "expected": "1. 检测到MD5不一致，删除损坏文件；2. 复制default_map.jpg到缓存目录并返回；3. 监控上报“cache_corrupted=1”",
+              "risk": "默认图过大增加流量消耗",
+              "priority": "P3"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度OCR token失效401触发静默刷新并重发",
+            "field_values": {
+              "preconditions": "1. 当前token已过期；2. 刷新接口正常；3. 重试上限=1",
+              "steps": "1. 上传一张景点图；2. 观察网络序列",
+              "expected": "1. 首次请求返回401；2. 自动调用/refresh_token获取新token；3. 原请求携带新token重发并成功识别；4. 用户无感知",
+              "risk": "刷新接口也401则需用户重新登录，流程中断",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "弱网（100kbps）下大图上传触发压缩降级",
+            "field_values": {
+              "preconditions": "1. 网络模拟100kbps；2. 原图4MB；3. 压缩策略：>1MB时压缩至720p、质量80%",
+              "steps": "1. 点击相机拍照生成4MB图；2. 确认上传",
+              "expected": "1. 自动压缩至~300KB；2. 上传耗时<8s；3. 识别结果正常返回；4. 监控记录“image_compressed=1”",
+              "risk": "压缩过度导致景点文字模糊识别失败",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "用户手动触发“刷新”绕过熔断强制走实时接口",
+            "field_values": {
+              "preconditions": "1. 静态地图正处于熔断Open状态；2. 用户长按“目的地”卡片出现“刷新”按钮",
+              "steps": "1. 点击“刷新”",
+              "expected": "1.  bypass熔断器，强制发一次实时请求；2. 若成功，熔断器直接置为Closed；3. 若仍失败，保持Open并Toast“刷新失败，请稍后再试”",
+              "risk": "频繁手动刷新可能打挂已脆弱的服务",
+              "priority": "P3"
+            },
+            "raw_text": null
+          }
+        ]
+      },
+      {
+        "name": "目标：当高德或百度 API 返回 4xx/5xx、QPS 超限或网络超 10 s 时，前端给出友好提示并自动降级（如缓存地图、显示“服务暂不可用”），无 Crash/ANR。",
+        "layout": "detailed",
+        "goal": "当高德或百度 API 返回 4xx/5xx、QPS 超限或网络超 10 s 时，前端给出友好提示并自动降级（如缓存地图、显示“服务暂不可用”），无 Crash/ANR。",
+        "fallback_content": null,
+        "cases": [
+          {
+            "title": "高德静态地图 4xx 降级",
+            "field_values": {
+              "preconditions": "App 已安装并启动；网络正常；本地无对应静态地图缓存",
+              "steps": [
+                "1. 打开抓包工具，将 maps.amap.com 所有 /staticmap 请求映射到 404",
+                "2. 点击首页「目的地」按钮"
+              ],
+              "expected": "1. 页面不 Crash/ANR；2. 2 s 内弹出 Toast「地图服务暂不可用，请稍后再试」；3. 自动展示上次缓存的全国概览图（无缓存则展示灰色占位图）；4. 按钮可继续点击",
+              "risk": "若缓存读取也失败，将一直展示灰色图，需人工验证缓存逻辑",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德路径规划 5xx 降级",
+            "field_values": {
+              "preconditions": "App 已启动；已开启定位权限；本地存在 24 h 内缓存的 POI 数据",
+              "steps": [
+                "1. 通过代理将 restapi.amap.com/v3/direction 返回 503",
+                "2. 点击「攻略」→「路径规划」→输入起点终点并确认"
+              ],
+              "expected": "1. 10 s 内请求超时，不触发重试；2. 弹窗提示「网络异常，已为您展示历史路线」；3. 页面展示缓存的最近一次路线（灰色蒙层标注“历史数据”）；4. 可正常返回上级页面",
+              "risk": "缓存数据为空时用户无法感知路线，需提示清晰",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "高德 QPS 超限 429 降级",
+            "field_values": {
+              "preconditions": "App 已启动；已登录；当日已高频调用 9000 次（通过后端 Mock）",
+              "steps": [
+                "1. 后端 Mock 返回 429+“Too Many Requests”",
+                "2. 连续点击「商城」→「天气查询」5 次（每次间隔 200 ms）"
+              ],
+              "expected": "1. 第 2 次起前端不再发请求，直接 Toast「查询过于频繁，请 60 s 后再试」；2. 展示最近一次缓存的天气卡片；3. 60 s 倒计时结束后按钮恢复可点；4. 无 ANR",
+              "risk": "若本地无缓存，天气区域空白，需确认 UI 不错位",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度 OCR 4xx 降级",
+            "field_values": {
+              "preconditions": "App 已授予相机/相册权限；本地无景点缓存",
+              "steps": [
+                "1. 将 aip.baidubce.com/rest/2.0/image-classify/v1/advanced_general 代理为 403",
+                "2. 点击「目的地」搜索框右侧相机图标→拍照→确认"
+              ],
+              "expected": "1. 3 s 内弹 Toast「图像识别服务暂不可用」；2. 自动退回搜索框页面；3. 键盘正常弹出，可手动输入；4. 无 Crash",
+              "risk": "若连续触发 3 次，需验证内存不泄漏",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "百度 OCR 网络超时 10 s 降级",
+            "field_values": {
+              "preconditions": "App 已启动；代理已配置 15 s 延迟",
+              "steps": [
+                "1. 点击相机图标→选择相册任意图片→确认上传",
+                "2. 等待前端处理"
+              ],
+              "expected": "1. 第 10 s 前端主动取消请求；2. Toast「网络超时，请检查网络或稍后重试」；3. 页面停留在相册选择页，可重新选择；4. 无 ANR",
+              "risk": "弱网环境下需验证进度条 10 s 准时消失",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "双 API 同时异常串行降级",
+            "field_values": {
+              "preconditions": "高德与百度域名均代理为 500；本地存在 7 天内缓存地图与景点",
+              "steps": [
+                "1. 先点击「目的地」触发高德静态地图 500",
+                "2. 不关闭弹窗，直接点击相机图标触发百度 OCR 500"
+              ],
+              "expected": "1. 两次请求各自独立降级；2. 先展示缓存地图，再弹第二个 Toast「图像识别服务暂不可用」；3. 两个提示不重叠，UI 正常；4. 无 Crash",
+              "risk": "需验证提示队列最多 3 个，避免叠加",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "缓存地图过期自动清理",
+            "field_values": {
+              "preconditions": "本地存在 31 天前缓存的静态地图；系统时间正常",
+              "steps": [
+                "1. 断网（飞行模式）",
+                "2. 点击「目的地」"
+              ],
+              "expected": "1. 检测到缓存过期，自动删除；2. 展示灰色占位图+Toast「离线地图已过期，请联网后重试」；3. 恢复网络后首次进入重新拉取并更新缓存",
+              "risk": "清理过程需验证不删除其他模块缓存",
+              "priority": "P2"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "ANR 阈值验证（主线程阻塞）",
+            "field_values": {
+              "preconditions": "Android 调试桥已连接；App 开启严格模式",
+              "steps": [
+                "1. 在 API 返回前 Thread.sleep(12000) 阻塞主线程",
+                "2. 点击「攻略」→「交通态势」"
+              ],
+              "expected": "1. 10 s 时前端触发超时逻辑，弹 Toast；2. 系统未弹出 ANR 对话框（Android 默认 5 s）；3. 后续操作流畅",
+              "risk": "仅验证一次，生产环境需结合 Google Vitals 监控",
+              "priority": "P0"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "iOS 后台任务超时（< 30 s）",
+            "field_values": {
+              "preconditions": "iPhone 真机；Xcode 控制台已连接；App 进入后台",
+              "steps": [
+                "1. 点击「商城」→「天气」后立即按 Home 键",
+                "2. 代理返回 5 s 延迟 500",
+                "3. 10 s 后切回前台"
+              ],
+              "expected": "1. 后台任务 10 s 被系统挂起，前端超时取消；2. 切回前台立即展示缓存天气；3. 无 Crash；控制台无 0x8badf00d 日志",
+              "risk": "需验证后台任务标记正确，否则可能被系统杀进程",
+              "priority": "P1"
+            },
+            "raw_text": null
+          },
+          {
+            "title": "弱网 2G 下连续超时重试策略",
+            "field_values": {
+              "preconditions": "使用网络模拟器设为 2G（250 kbps/300 ms RTT）；缓存为空",
+              "steps": [
+                "1. 连续点击「目的地」3 次（每次间隔 3 s）"
+              ],
+              "expected": "1. 仅首次发出请求，后两次直接读缓存/降级提示，不再重试；2. 三次总耗时 < 35 s；3. 无 ANR",
+              "risk": "需确认重试计数器在进程生命周期内有效",
+              "priority": "P2"
+            },
+            "raw_text": null
+          }
+        ]
+      }
+    ]
+  }
+}

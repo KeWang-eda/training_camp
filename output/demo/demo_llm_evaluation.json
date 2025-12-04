@@ -1,0 +1,233 @@
+{
+  "metadata": {
+    "generated_at": "2025-12-03T15:29:08.485004",
+    "config_hash": "70d925da4216"
+  },
+  "results": [
+    {
+      "name": "alignment",
+      "score": 62.0,
+      "summary": "方案整体结构完整，覆盖了静态地图、商城天气联动、攻略聚合、OCR 识别与异常降级五大需求，并给出性能/并发/弱网/缓存等补充场景。但呈现方式仍以“逐条用例”为主，缺少对测试策略的抽象归纳（如分层测试、核心质量风险、左移/右移手段），也未显式说明各模块的验收标准如何与产品/开发达成一致。需补充：1) 用例背后的测试模型（输入-触发-观测-判定）与优先级逻辑；2) 依赖项（高德/百度配额、Mock 方案、缓存策略）如何被三方评审并固化；3) 关键指标（≤2 s、≤3 s、≥90% 准确率）的统计口径与采样方法；4) 自动化/CI 集成计划，避免仅依赖手工验证。",
+      "suggestions": [
+        {
+          "id": "S1",
+          "text": "用例颗粒度过细，评审易陷入细节而忽视整体质量风险",
+          "priority": "P3",
+          "level": 3,
+          "deduction": 7,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S2",
+          "text": "未定义各接口异常时的业务降级优先级，可能因缓存过期导致白屏",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S3",
+          "text": "性能指标未区分网络环境（4G/Wi-Fi/弱网）与设备档位，验收口径模糊",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S4",
+          "text": "OCR 准确率≥90% 未说明测试集构造方式，存在采样偏差风险",
+          "priority": "P3",
+          "level": 3,
+          "deduction": 7,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S5",
+          "text": "未给出配额耗尽后的预警与扩容机制，测试无法持续验证降级逻辑",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        }
+      ],
+      "penalty_summary": {
+        "count": 5,
+        "total_deduction": 38
+      },
+      "metadata": {}
+    },
+    {
+      "name": "coverage",
+      "score": 49.0,
+      "summary": "用例集对5大功能模块的主干、异常、降级、性能、安全、兼容性均做了系统覆盖；优先级（P0-P3）划分清晰，结构统一，字段完整。冗余度低，仅个别缓存/超时场景在「静态地图」与「异常与降级」模块重复描述，可合并。缺失：①多语言/国际化文案验证；②无障碍朗读焦点顺序；③服务端限流配置变更后的动态生效验证；④iOS/Android权限「仅一次」新模型；⑤高德/百度Key轮换机制；⑥用户隐私合规（GDPR/中国PIPL）明示同意与数据删除链路。",
+      "suggestions": [
+        {
+          "id": "S1",
+          "text": "缓存图MD5校验失败时若默认图亦损坏将真空白屏",
+          "priority": "P0",
+          "level": 0,
+          "deduction": 10,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S2",
+          "text": "百度OCR白名单兜底数据未更新导致错误景点信息",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S3",
+          "text": "后台任务标记错误引发iOS 0x8badf00d杀进程",
+          "priority": "P0",
+          "level": 0,
+          "deduction": 10,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S4",
+          "text": "2G弱网下重试计数器未跨进程持久化，杀进程后重试风暴",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S5",
+          "text": "未验证多语言降级文案导致海外用户无法识别提示",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S6",
+          "text": "未覆盖权限「仅一次」模型，再次点击时无重新授权流程",
+          "priority": "P3",
+          "level": 3,
+          "deduction": 7,
+          "category": "general",
+          "hint": "Level inferred by model"
+        }
+      ],
+      "penalty_summary": {
+        "count": 6,
+        "total_deduction": 51
+      },
+      "metadata": {}
+    },
+    {
+      "name": "bug_prevention",
+      "score": 18.0,
+      "summary": "用例在功能、性能、弱网、缓存、熔断、降级、重试、并发、字段缺失、缓存过期、压缩、权限、格式兼容等方面已给出较细场景，但缺少：1) 发布回滚预案验证；2) 灰度/分流开关验证；3) 数据对账与一致性校验；4) 敏感数据脱敏与合规审计；5) 恶意请求/防刷限流；6) 核心 SLA 实时监控与告警阈值；7) 灾备机房/多活切换；8) 配置热变更一致性；9) 缓存雪崩/穿透/击穿防护；10) 依赖上下游同时挂掉的级联故障演练。",
+      "suggestions": [
+        {
+          "id": "S1",
+          "text": "未覆盖发布回滚与灰度开关场景",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S2",
+          "text": "缺少数据对账、脱敏与合规审计用例",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S3",
+          "text": "未验证恶意流量防刷与风控规则",
+          "priority": "P0",
+          "level": 0,
+          "deduction": 10,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S4",
+          "text": "未定义核心 SLA 监控告警阈值用例",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S5",
+          "text": "未验证多活/灾备机房切换预案",
+          "priority": "P1",
+          "level": 1,
+          "deduction": 9,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S6",
+          "text": "未覆盖配置中心热变更一致性",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S7",
+          "text": "未验证缓存雪崩、穿透、击穿防护",
+          "priority": "P2",
+          "level": 2,
+          "deduction": 8,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S8",
+          "text": "未验证上下游同时故障的级联容灾",
+          "priority": "P1",
+          "level": 1,
+          "deduction": 9,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S9",
+          "text": "未验证限流与配额动态调整策略",
+          "priority": "P3",
+          "level": 3,
+          "deduction": 7,
+          "category": "general",
+          "hint": "Level inferred by model"
+        },
+        {
+          "id": "S10",
+          "text": "未验证日志采样与追踪链完整性",
+          "priority": "P3",
+          "level": 3,
+          "deduction": 7,
+          "category": "general",
+          "hint": "Level inferred by model"
+        }
+      ],
+      "penalty_summary": {
+        "count": 10,
+        "total_deduction": 82
+      },
+      "metadata": {}
+    }
+  ]
+}

@@ -8,8 +8,10 @@ __pycache__/
 output/logs/
 
 # Generated artifacts
-output/
-outputs/
+output/*
+!output/demo/
+!output/demo/*
+
 tmp/
 langchain-chatbot/
 

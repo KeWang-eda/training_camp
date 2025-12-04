@@ -84,6 +84,24 @@ LLM 返回结构化 JSON → EvaluationEngine 归一化风险 & 扣分 → 写�
 - `results[].suggestions`：列表元素为字典，至少包含 `text`；`deduction`/`level`/`priority` 可缺省，由引擎自动补全。
 - `results[].penalty_summary`：记录扣分条目数量与总扣分，用于快速统计。
 
+### 3.1 示例映射：`output/demo/demo_llm_evaluation.json`
+
+| 字段 | 示例值 | 说明 |
+| --- | --- | --- |
+| `metadata.generated_at` | `2025-12-03T15:29:08.485004` | 与对应的 `/generate_cases` 输出共享同一时区（UTC+0），便于按时间排序。 |
+| `metadata.config_hash` | `70d925da4216` | 与 demo 测试用例文件一致，验证评估使用了相同配置。 |
+| `results[0].name` | `alignment` | 指标名称与 `review_metrics` 顺序一一对应。 |
+| `results[0].score` | `62.0` | 扣分后得分；若需要计算总分，可直接 `sum(score)/len(results)` 或自定义加权。 |
+| `results[0].suggestions[0].priority` | `P3` | 评估器建议的紧急程度。缺失时引擎会推断并写回。 |
+| `results[0].suggestions[0].level` | `3` | 0 表示最高风险，数值越大风险越低。 |
+| `results[0].suggestions[0].deduction` | `7` | 与 `penalty_summary.total_deduction` 一同使用，计算最终得分。 |
+| `results[0].suggestions[0].category` | `general` | 预留标签，支持未来扩展（例如标记 `coverage`、`resilience`）。 |
+| `results[0].suggestions[0].hint` | `Level inferred by model` | 指出当前条目是由评估器推断等级还是外部输入。 |
+| `results[0].penalty_summary.count` | `5` | 当前指标触发的扣分条目数量。 |
+| `results[0].penalty_summary.total_deduction` | `38` | 累计扣分，用于校验 `score = max(0, 100 - total_deduction)`。 |
+
+> 若需要在报告中补充更多上下文，可以在 `results[].metadata` 中写入 `candidate_path`、`baseline_path` 或自定义标记，评估引擎会原样保留。
+
 ---
 
 ## 4. 扣分与客观性保障
