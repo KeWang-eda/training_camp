@@ -85,7 +85,6 @@ pip install -r requirements.txt
    ```
 4. 使用 `/read <路径>`、`/read_link <feishu_url>` 导入资料，随后执行 `/generate_cases`、`/evaluate_cases` 生成并评审测试用例。
 
-> 截图/GIF占位：read → generate → evaluate 的完整终端流程。
 
 ## 常用命令
 | 命令 | 说明 | 常用参数 |
@@ -130,10 +129,10 @@ python cli.py --config config.yaml -f scrpits/sample.tcl --log-file ./output/log
 
 ## 路线图
 - [ ] 文档与输入：提升 `/read` 与 `/read_link` 的解析与摘要质量（文本/图片/飞书）。
-- [ ] 评审接口抽象：稳定 JSON 契约，允许替换为自研评分器；完善风险项策略与扣分规则。
-- [ ] 模板与模式：增强 `testcase_layouts`/`testcase_modes` 的版本化与维护体验。
 - [ ] Prompt 策略：细化图片类型与文本策略的分层设计，支持版本灰度与对比实验。
-- [ ] 命令扩展：沉淀常用命令集合（润色、结构化重写、质量检查），通过配置直接启用。
+- [ ] 命令扩展：沉淀常用命令集合（润色、结构化重写、质量检查），通过 config 配置直接启用。
+- [ ] 评审接口抽象：临时 LLM 评价器，完善风险项策略与扣分规则；允许替换为自研评分器。
+- [ ] 脚本支持：支持 flow 脚本一键运行，为 CI/CD 提供接口。
 
 ## 贡献与致谢
 - 欢迎提交 Issue/PR，保持 snake_case 风格，并在描述中注明背景、变更点、测试方式与影响范围。
@@ -142,3 +141,4 @@ python cli.py --config config.yaml -f scrpits/sample.tcl --log-file ./output/log
 ## 参考项目
 - Best README Template: https://github.com/othneildrew/Best-README-Template
 - LangChain Chatbot: https://github.com/shashankdeshpande/langchain-chatbot
+- python_langchain_cn: //github.com/liteli1987gmail/python_langchain_cn.git
