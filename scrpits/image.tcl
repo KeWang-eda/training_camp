@@ -1,3 +1,3 @@
-/read /home/wangke/ByteDance/training_camp/pipeline/images/数据流程图.png
+/read pipeline/images/数据流程图.png
 /generate_cases
 /evaluate_cases

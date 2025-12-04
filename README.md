@@ -141,4 +141,4 @@ python cli.py --config config.yaml -f scrpits/sample.tcl --log-file ./output/log
 ## 参考项目
 - Best README Template: https://github.com/othneildrew/Best-README-Template
 - LangChain Chatbot: https://github.com/shashankdeshpande/langchain-chatbot
-- python_langchain_cn: //github.com/liteli1987gmail/python_langchain_cn.git
+- python_langchain_cn: https://github.com/liteli1987gmail/python_langchain_cn.git

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Minimal runner: execute all .tcl scripts sequentially and print original outputs.
-ROOT_DIR="/home/wangke/ByteDance/training_camp"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+ROOT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 SCRIPTS_DIR="$ROOT_DIR/scrpits"
 CLI="$ROOT_DIR/cli.py"
 
@@ -31,7 +32,7 @@ for script in "${scripts_sorted[@]}"; do
   right=$(printf '%*s' "$right_len" '' | tr ' ' '=')
   printf "\n%s%s%s\n" "$left" "$title" "$right"
   # Run CLI for this script; print raw output
-  python "$CLI" -f "$script"
+  ( cd "$ROOT_DIR" && python "$CLI" -f "$script" )
   # No END bar per user preference
 done
 
